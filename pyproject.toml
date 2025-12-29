@@ -12,6 +12,7 @@ dependencies = [
     "dateutils>=0.6.12",
     "isodate>=0.7.2",
     "pydantic-settings>=2.12.0",
+    "pyyaml>=6.0.3",
 ]
 
 [project.scripts]

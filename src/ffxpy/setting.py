@@ -18,6 +18,7 @@ class Setting(pydantic_settings.BaseSettings):
     working_dir: Path | None = None
     output_dir: Path | None = None
     output_path: Path | None = None
+    input_path: Path | None = None
     ffmpeg_path: str = ''
     video_codec: str = 'copy'
     video_bitrate: str | None = None
@@ -31,7 +32,10 @@ class Setting(pydantic_settings.BaseSettings):
     end: timedelta | None = None
     overwrite: bool = False
     skip_existing: bool = False
+    with_suffix: bool = True
+    with_split: bool = True
     scale: str | None = None
+    merge_paths: list[Path] = pydantic.Field(default_factory=list)
 
     @pydantic.model_validator(mode='after')
     def validator(self):

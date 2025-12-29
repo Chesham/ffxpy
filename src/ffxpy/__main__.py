@@ -5,8 +5,11 @@ from pathlib import Path
 import async_typer
 import isodate
 import typer
+import yaml
 
+from ffxpy.const import Command
 from ffxpy.context import Context, solve_context
+from ffxpy.models.flow import Flow
 from ffxpy.setting import Setting
 
 app = async_typer.AsyncTyper(no_args_is_help=True)
@@ -43,7 +46,7 @@ def callback(
     '''
     ctx = Context()
     if working_dir:
-        ctx.setting.working_dir = str(working_dir)
+        ctx.setting.working_dir = working_dir
     if output_path:
         ctx.setting.output_path = output_path
     if overwrite is not None:
@@ -101,32 +104,16 @@ async def split(
     ),
 ):
     ctx = solve_context(ctx_)
-    setting = ctx.setting
+    ctx.setting.input_path = input_path
+    setting = split_normalize(ctx.setting)
+    setting.start = start
+    setting.end = end
     if video_codec:
         setting.video_codec = video_codec
     if audio_codec:
         setting.audio_codec = audio_codec
-    setting.start = start
-    setting.end = end
+    setting.with_suffix = with_suffix
     output_path = setting.output_path
-
-    if not output_path:
-        if with_suffix:
-            stem = f'{input_path.stem}_split'
-            if setting.start:
-                stem += (
-                    f'_{isodate.duration_isoformat(setting.start, "PT%HH%MM%S.%fS")}'
-                )
-            if setting.end:
-                stem += f'_{isodate.duration_isoformat(setting.end, "PT%HH%MM%S.%fS")}'
-            output_path = input_path.with_stem(stem)
-        else:
-            output_path = Path(input_path.name)
-
-    if setting.output_dir:
-        output_path = setting.output_dir / output_path.name
-    elif setting.working_dir:
-        output_path = setting.working_dir / output_path.name
 
     if output_path.is_dir():
         raise ValueError('output_path cannot be a directory')
@@ -156,48 +143,125 @@ async def merge(
     ),
 ):
     ctx = solve_context(ctx_)
-    setting = ctx.setting
-    working_dir = setting.working_dir
-    output_path = setting.output_path
-
-    file_paths = []
-    if working_dir:
-        if not working_dir.is_dir():
-            raise NotADirectoryError(f'working_dir "{working_dir}" is not a directory')
-        if with_split:
-            file_paths = sorted(working_dir.glob('*_split_*', case_sensitive=False))
-
-    if not file_paths:
-        raise ValueError('No files to merge.')
-
-    list_file = working_dir / 'ffxpy_merge_list.txt'
-    with list_file.open('w') as f:
-        for file_path in file_paths:
-            f.write(f"file '{file_path.resolve()}'\n")
-    print(f'Following files will be merged: {[i.name for i in file_paths]}')
-
-    filename = f'{file_paths[0].stem.split("_split")[0]}{file_paths[0].suffix}'
-    if not output_path:
-        if setting.output_dir:
-            output_path = setting.output_dir / filename
-        elif working_dir:
-            output_path = working_dir / filename
-        else:
-            raise ValueError('No output path specified.')
-
-    if output_path.parent == working_dir:
-        output_path = output_path.with_stem(f'{output_path.stem}_merged')
+    setting = merge_normalize(ctx.setting)
+    setting.with_split = with_split
 
     args = compile_commandline(
         setting,
-        list_file,
-        output_path,
+        setting.input_path,
+        setting.output_path,
         before_inputs={
             '-f': 'concat',
             '-safe': '0',
         },
     )
+
+    if setting.input_path:
+        setting.input_path.write_text(
+            ''.join(f"file '{path.resolve()}'\n" for path in setting.merge_paths)
+        )
+
     await run_ffmpeg(args)
+
+
+@app.async_command(no_args_is_help=True)
+async def flow(
+    ctx_: typer.Context,
+    flow_path: Path = typer.Argument(
+        help='Path to ffx flow YAML file.',
+        parser=Path,
+        metavar='TEXT',
+    ),
+):
+    ctx = solve_context(ctx_)
+    setting = ctx.setting
+
+    flow = Flow.model_validate(yaml.safe_load(flow_path.open()))
+    for index, job in enumerate(flow.jobs):
+        job_name = job.name or f'[Unnamed Job]'
+        print(f'Job #{index} {job_name}')
+
+        before_inputs = {}
+
+        if job.command == Command.SPLIT:
+            job.setting = split_normalize(job.setting)
+        elif job.command == Command.MERGE:
+            job.setting = merge_normalize(job.setting)
+            before_inputs = {
+                '-f': 'concat',
+                '-safe': '0',
+            }
+            job.setting.input_path.write_text(
+                ''.join(
+                    f"file '{path.resolve()}'\n" for path in job.setting.merge_paths
+                )
+            )
+
+        if not job.setting.overwrite and job.setting.skip_existing:
+            if job.setting.output_path and job.setting.output_path.exists():
+                print(f'Skip existing file: "{job.setting.output_path}"')
+                continue
+
+        args = compile_commandline(
+            job.setting,
+            job.setting.input_path,
+            job.setting.output_path,
+            before_inputs=before_inputs,
+        )
+        await run_ffmpeg(args)
+
+
+def split_normalize(setting: Setting):
+    input_path = setting.input_path
+    output_path = setting.output_path
+    if not output_path:
+        if setting.with_suffix:
+            stem = f'{input_path.stem}_split'
+            if setting.start:
+                stem += (
+                    f'_{isodate.duration_isoformat(setting.start, "PT%HH%MM%S.%fS")}'
+                )
+            if setting.end:
+                stem += f'_{isodate.duration_isoformat(setting.end, "PT%HH%MM%S.%fS")}'
+            output_path = input_path.with_stem(stem)
+        else:
+            output_path = Path(input_path.name)
+
+    if setting.output_dir:
+        output_path = setting.output_dir / output_path.name
+    elif setting.working_dir:
+        output_path = setting.working_dir / output_path.name
+
+    setting.output_path = output_path
+
+    return setting
+
+
+def merge_normalize(setting: Setting):
+    if not setting.merge_paths and setting.with_split:
+        setting.merge_paths = sorted(
+            setting.working_dir.glob('*_split_*', case_sensitive=False)
+        )
+
+    setting.input_path = (
+        setting.input_path or setting.working_dir / 'ffxpy_merge_list.txt'
+    )
+
+    if not setting.output_path:
+        filename = f'{setting.merge_paths[0].stem.split("_split")[0]}{setting.merge_paths[0].suffix}'
+        if setting.output_dir:
+            setting.output_path = setting.output_dir / filename
+        elif setting.working_dir:
+            setting.output_path = setting.working_dir / filename
+        else:
+            raise ValueError('no output path specified')
+
+    if setting.output_path.parent == setting.working_dir:
+        setting.output_path = setting.output_path.with_stem(
+            f'{setting.output_path.stem}_merged'
+        )
+
+    return setting
 
 
 def compile_commandline(
