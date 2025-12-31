@@ -349,6 +349,8 @@ async def run_ffmpeg(args):
     ]
     await asyncio.gather(*tasks)
     await process.wait()
+    if process.returncode != 0:
+        raise RuntimeError(f'ffmpeg exited with code {process.returncode}')
 
     return process
 
