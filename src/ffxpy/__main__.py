@@ -9,7 +9,7 @@ import yaml
 
 from ffxpy.const import Command
 from ffxpy.context import Context, solve_context
-from ffxpy.models.flow import Flow
+from ffxpy.models.flow import Flow, split_normalize
 from ffxpy.setting import Setting
 
 app = async_typer.AsyncTyper(no_args_is_help=True)
@@ -185,9 +185,7 @@ async def flow(
 
         before_inputs = {}
 
-        if job.command == Command.SPLIT:
-            job.setting = split_normalize(job.setting)
-        elif job.command == Command.MERGE:
+        if job.command == Command.MERGE:
             job.setting = merge_normalize(job.setting)
             before_inputs = {
                 '-f': 'concat',
@@ -211,32 +209,6 @@ async def flow(
             before_inputs=before_inputs,
         )
         await run_ffmpeg(args)
-
-
-def split_normalize(setting: Setting):
-    input_path = setting.input_path
-    output_path = setting.output_path
-    if not output_path:
-        if setting.with_suffix:
-            stem = f'{input_path.stem}_split'
-            if setting.start:
-                stem += (
-                    f'_{isodate.duration_isoformat(setting.start, "PT%HH%MM%S.%fS")}'
-                )
-            if setting.end:
-                stem += f'_{isodate.duration_isoformat(setting.end, "PT%HH%MM%S.%fS")}'
-            output_path = input_path.with_stem(stem)
-        else:
-            output_path = Path(input_path.name)
-
-    if setting.output_dir:
-        output_path = setting.output_dir / output_path.name
-    elif setting.working_dir:
-        output_path = setting.working_dir / output_path.name
-
-    setting.output_path = output_path
-
-    return setting
 
 
 def merge_normalize(setting: Setting):
