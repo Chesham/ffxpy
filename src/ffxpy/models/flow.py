@@ -9,6 +9,19 @@ class FlowJob(pydantic.BaseModel):
     command: Command
     setting: Setting
 
+    @pydantic.model_validator(mode='before')
+    @classmethod
+    def before_validator(cls, data, info: pydantic.ValidationInfo):
+        return info.context | data if info.context else data
+
+    @pydantic.model_validator(mode='after')
+    def validator(self):
+        if self.command == Command.MERGE:
+            # Reset input_path to None for merge jobs to prevent inheritance from flow settings
+            if not self.setting.input_path:
+                self.setting.input_path = None
+        return self
+
 
 class Flow(pydantic.BaseModel):
     setting: Setting | None = None

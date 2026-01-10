@@ -176,7 +176,9 @@ async def flow(
     ctx = solve_context(ctx_)
     setting = ctx.setting
 
-    flow = Flow.model_validate(yaml.safe_load(flow_path.open()))
+    flow = Flow.model_validate(
+        yaml.safe_load(flow_path.open()), context={'setting': setting}
+    )
     for index, job in enumerate(flow.jobs):
         job_name = job.name or f'[Unnamed Job]'
         print(f'Job #{index} {job_name}')
