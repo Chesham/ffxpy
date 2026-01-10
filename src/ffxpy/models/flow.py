@@ -34,7 +34,7 @@ class Flow(pydantic.BaseModel):
     def validator(self):
         if self.setting:
             parent_setting = self.setting.model_dump(exclude_unset=True)
-            for job in self.jobs:
+            for idx, job in enumerate(self.jobs):
                 job.setting = Setting.model_validate(
                     parent_setting | job.setting.model_dump(exclude_unset=True)
                 )
@@ -43,7 +43,14 @@ class Flow(pydantic.BaseModel):
                     job.setting = split_normalize(job.setting)
 
                 if job.command == Command.MERGE:
-                    job.setting = merge_normalize(job.setting)
+                    job.setting = merge_normalize(
+                        job.setting,
+                        merge_paths=[
+                            i.setting.output_path
+                            for i in self.jobs[:idx]
+                            if i.setting.output_path
+                        ],
+                    )
 
         return self
 
@@ -74,11 +81,14 @@ def split_normalize(setting: Setting):
     return setting
 
 
-def merge_normalize(setting: Setting):
-    if not setting.merge_paths and setting.with_split:
-        setting.merge_paths = sorted(
-            setting.working_dir.glob('*_split_*', case_sensitive=False)
-        )
+def merge_normalize(setting: Setting, merge_paths: list[Path] | None = None):
+    if not setting.merge_paths:
+        if merge_paths:
+            setting.merge_paths = merge_paths
+        elif setting.with_split:
+            setting.merge_paths = sorted(
+                setting.working_dir.glob('*_split_*', case_sensitive=False)
+            )
 
     setting.input_path = (
         setting.input_path or setting.working_dir / 'ffxpy_merge_list.txt'
