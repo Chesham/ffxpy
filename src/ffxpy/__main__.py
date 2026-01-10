@@ -179,6 +179,8 @@ async def flow(
     flow = Flow.model_validate(
         yaml.safe_load(flow_path.open()), context={'setting': setting}
     )
+
+    pending_tasks = []
     for index, job in enumerate(flow.jobs):
         job_name = job.name or f'[Unnamed Job]'
         print(f'Job #{index} {job_name}')
@@ -207,7 +209,18 @@ async def flow(
             job.setting.output_path,
             before_inputs=before_inputs,
         )
-        await run_ffmpeg(args)
+
+        if job.command == Command.MERGE:
+            if pending_tasks:
+                await asyncio.gather(*pending_tasks)
+                pending_tasks.clear()
+            await run_ffmpeg(args)
+        else:
+            task = asyncio.create_task(run_ffmpeg(args))
+            pending_tasks.append(task)
+
+    if pending_tasks:
+        await asyncio.gather(*pending_tasks)
 
     if not setting.keep_temp:
         for job in flow.jobs:
