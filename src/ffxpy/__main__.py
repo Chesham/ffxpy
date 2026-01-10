@@ -209,6 +209,13 @@ async def flow(
         )
         await run_ffmpeg(args)
 
+    if not setting.keep_temp:
+        for job in flow.jobs:
+            if job.command == Command.MERGE:
+                job.setting.input_path.unlink(missing_ok=True)
+                for path in job.setting.merge_paths:
+                    path.unlink(missing_ok=True)
+
 
 def compile_commandline(
     setting: Setting,

@@ -36,6 +36,7 @@ class Setting(pydantic_settings.BaseSettings):
     with_split: bool = True
     scale: str | None = None
     merge_paths: list[Path] = pydantic.Field(default_factory=list)
+    keep_temp: bool = False
 
     @pydantic.model_validator(mode='after')
     def validator(self):
