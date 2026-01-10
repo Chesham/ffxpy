@@ -9,7 +9,7 @@ import yaml
 
 from ffxpy.const import Command
 from ffxpy.context import Context, solve_context
-from ffxpy.models.flow import Flow, split_normalize
+from ffxpy.models.flow import Flow, merge_normalize, split_normalize
 from ffxpy.setting import Setting
 
 app = async_typer.AsyncTyper(no_args_is_help=True)
@@ -186,7 +186,6 @@ async def flow(
         before_inputs = {}
 
         if job.command == Command.MERGE:
-            job.setting = merge_normalize(job.setting)
             before_inputs = {
                 '-f': 'concat',
                 '-safe': '0',
@@ -209,33 +208,6 @@ async def flow(
             before_inputs=before_inputs,
         )
         await run_ffmpeg(args)
-
-
-def merge_normalize(setting: Setting):
-    if not setting.merge_paths and setting.with_split:
-        setting.merge_paths = sorted(
-            setting.working_dir.glob('*_split_*', case_sensitive=False)
-        )
-
-    setting.input_path = (
-        setting.input_path or setting.working_dir / 'ffxpy_merge_list.txt'
-    )
-
-    if not setting.output_path:
-        filename = f'{setting.merge_paths[0].stem.split("_split")[0]}{setting.merge_paths[0].suffix}'
-        if setting.output_dir:
-            setting.output_path = setting.output_dir / filename
-        elif setting.working_dir:
-            setting.output_path = setting.working_dir / filename
-        else:
-            raise ValueError('no output path specified')
-
-    if setting.output_path.parent == setting.working_dir:
-        setting.output_path = setting.output_path.with_stem(
-            f'{setting.output_path.stem}_merged'
-        )
-
-    return setting
 
 
 def compile_commandline(

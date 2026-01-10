@@ -42,6 +42,9 @@ class Flow(pydantic.BaseModel):
                 if job.command == Command.SPLIT:
                     job.setting = split_normalize(job.setting)
 
+                if job.command == Command.MERGE:
+                    job.setting = merge_normalize(job.setting)
+
         return self
 
 
@@ -67,5 +70,32 @@ def split_normalize(setting: Setting):
         output_path = setting.working_dir / output_path.name
 
     setting.output_path = output_path
+
+    return setting
+
+
+def merge_normalize(setting: Setting):
+    if not setting.merge_paths and setting.with_split:
+        setting.merge_paths = sorted(
+            setting.working_dir.glob('*_split_*', case_sensitive=False)
+        )
+
+    setting.input_path = (
+        setting.input_path or setting.working_dir / 'ffxpy_merge_list.txt'
+    )
+
+    if not setting.output_path:
+        filename = f'{setting.merge_paths[0].stem.split("_split")[0]}{setting.merge_paths[0].suffix}'
+        if setting.output_dir:
+            setting.output_path = setting.output_dir / filename
+        elif setting.working_dir:
+            setting.output_path = setting.working_dir / filename
+        else:
+            raise ValueError('no output path specified')
+
+    if setting.output_path.parent == setting.working_dir:
+        setting.output_path = setting.output_path.with_stem(
+            f'{setting.output_path.stem}_merged'
+        )
 
     return setting
