@@ -222,9 +222,9 @@ async def flow(
     if pending_tasks:
         await asyncio.gather(*pending_tasks)
 
-    if not setting.keep_temp:
+    if not flow.setting.keep_temp:
         for job in flow.jobs:
-            if job.command == Command.MERGE:
+            if job.command == Command.MERGE and not job.setting.keep_temp:
                 job.setting.input_path.unlink(missing_ok=True)
                 for path in job.setting.merge_paths:
                     path.unlink(missing_ok=True)
