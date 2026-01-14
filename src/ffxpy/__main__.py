@@ -230,6 +230,17 @@ async def flow(
                     path.unlink(missing_ok=True)
 
 
+@app.async_command(
+    context_settings={'allow_extra_args': True, 'ignore_unknown_options': True},
+    no_args_is_help=True,
+    help='Execute ffmpeg directly with passed arguments.',
+)
+async def exec(ctx_: typer.Context):
+    ctx = solve_context(ctx_)
+    args = [ctx.setting.ffmpeg_path, *ctx_.args]
+    await run_ffmpeg(args)
+
+
 def compile_commandline(
     setting: Setting,
     input_path: Path,
