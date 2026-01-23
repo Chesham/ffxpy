@@ -38,6 +38,17 @@ class Setting(pydantic_settings.BaseSettings):
     merge_paths: list[Path] = pydantic.Field(default_factory=list)
     keep_temp: bool = False
 
+    @pydantic.field_validator(
+        'working_dir', 'output_dir', 'output_path', 'input_path', mode='before'
+    )
+    @classmethod
+    def path_validator(cls, v: str | Path | None) -> str | Path | None:
+        if not v:
+            return v
+        if isinstance(v, Path):
+            return v
+        return v.replace('\\', '/')
+
     @pydantic.model_validator(mode='after')
     def validator(self):
         if not self.ffmpeg_path:
