@@ -6,6 +6,7 @@ readme = "README.md"
 authors = [
     { name = "chesham", email = "c.moweb@gmail.com" }
 ]
+license = { file = "LICENSE" }
 requires-python = ">=3.13"
 dependencies = [
     "async-typer",
