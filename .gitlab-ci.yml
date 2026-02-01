@@ -6,7 +6,7 @@ before_script:
   - export FQIN=$FQIP:$(git describe --always --tags)
 
 build:
-  environment: develop
+  environment: production
   stage: build
   only:
     - tags
@@ -14,9 +14,9 @@ build:
     - docker build --target publish -t $FQIN .
 
 publish:
-  environment: develop
+  environment: production
   stage: publish
   only:
     - tags
   script:
-    - docker run -e UV_PUBLISH_URL -e UV_PUBLISH_TOKEN "$FQIN"
+    - docker run -e UV_PUBLISH_TOKEN "$FQIN"
