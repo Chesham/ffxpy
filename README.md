@@ -61,7 +61,7 @@ uv run ffx exec -i input.mp4 -vf scale=1280:-1 output.mp4
 
 ### 4. Flow (Pipeline Automation)
 
-The **Flow** feature is the core value proposition of `ffxpy`. It allows you to script multiple `ffmpeg` operations into a single, automated YAML workflow.
+The **Flow** feature is the core value proposition of `ffxpy`. It allows you to script multiple `ffmpeg` operations into a single, automated YAML workflow. The `flow` feature automatically analyzes and adopts the optimal parallel execution strategy to execute actions for maximum performance.
 
 **Basic Example: Split and Merge**
 
