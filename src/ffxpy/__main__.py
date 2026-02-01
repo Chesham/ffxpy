@@ -2,7 +2,6 @@ import asyncio
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import async_typer
 import isodate
 import typer
 import yaml
@@ -11,6 +10,7 @@ from ffxpy.const import Command
 from ffxpy.context import Context, solve_context
 from ffxpy.models.flow import Flow, merge_normalize, split_normalize
 from ffxpy.setting import Setting
+from ffxpy.vendor import async_typer
 
 app = async_typer.AsyncTyper(no_args_is_help=True)
 
