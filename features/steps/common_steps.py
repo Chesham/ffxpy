@@ -1,7 +1,15 @@
+import os
 import subprocess
 
 from behave import given, then, when
 from grappa import should
+
+
+@given('我設定環境變數 "{name}" 為 "{value}"')
+def step_given_set_env(context, name, value):
+    if not hasattr(context, 'env'):
+        context.env = os.environ.copy()
+    context.env[name] = value
 
 
 @given('我執行指令 "{command}"')
@@ -18,12 +26,14 @@ def step_when_run_command(context, command):
         full_command = command
 
     # Run the command and capture output
+    env = getattr(context, 'env', None)
     result = subprocess.run(
         full_command,
         shell=True,
         capture_output=True,
         text=True,
-        cwd=context.working_dir
+        cwd=context.working_dir,
+        env=env,
     )
 
     context.last_command = command

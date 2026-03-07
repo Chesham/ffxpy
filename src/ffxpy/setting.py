@@ -1,3 +1,4 @@
+import os
 import shutil
 from datetime import timedelta
 from pathlib import Path
@@ -54,10 +55,14 @@ class Setting(pydantic_settings.BaseSettings):
         if not self.ffmpeg_path:
             ffmpeg_path = shutil.which('ffmpeg')
             if ffmpeg_path is None:
-                raise ValueError(
-                    'ffmpeg not found in PATH, please set FFXPY_FFMPEG_PATH in .env'
-                )
+                raise ValueError('ffmpeg not found in PATH')
             self.ffmpeg_path = ffmpeg_path
+
+        # Check if the provided ffmpeg_path exists and is executable
+        if not os.path.isfile(self.ffmpeg_path):
+            raise ValueError(f'ffmpeg not found at: {self.ffmpeg_path}')
+        if not os.access(self.ffmpeg_path, os.X_OK):
+            raise ValueError(f'ffmpeg at {self.ffmpeg_path} is not executable')
 
         if self.video_codec != 'copy' and not self.video_bitrate:
             raise ValueError('video_bitrate must be set when video_codec is not "copy"')

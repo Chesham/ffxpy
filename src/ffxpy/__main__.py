@@ -59,7 +59,12 @@ def callback(
     """
     ffxpy: A tool to simplify complex ffmpeg operations.
     """
-    ctx = Context()
+    try:
+        ctx = Context()
+    except Exception as e:
+        print(f'Error initializing settings: {e}')
+        raise typer.Exit(code=1)
+
     if working_dir:
         ctx.setting.working_dir = working_dir
     if output_path:
