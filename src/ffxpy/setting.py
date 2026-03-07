@@ -21,6 +21,7 @@ class Setting(pydantic_settings.BaseSettings):
     output_path: Path | None = None
     input_path: Path | None = None
     ffmpeg_path: str = ''
+    ffprobe_path: str = ''
     video_codec: str = 'copy'
     video_bitrate: str | None = None
     audio_codec: str = 'copy'
@@ -63,6 +64,18 @@ class Setting(pydantic_settings.BaseSettings):
             raise ValueError(f'ffmpeg not found at: {self.ffmpeg_path}')
         if not os.access(self.ffmpeg_path, os.X_OK):
             raise ValueError(f'ffmpeg at {self.ffmpeg_path} is not executable')
+
+        if not self.ffprobe_path:
+            ffprobe_path = shutil.which('ffprobe')
+            if ffprobe_path is None:
+                raise ValueError('ffprobe not found in PATH')
+            self.ffprobe_path = ffprobe_path
+
+        # Check if the provided ffprobe_path exists and is executable
+        if not os.path.isfile(self.ffprobe_path):
+            raise ValueError(f'ffprobe not found at: {self.ffprobe_path}')
+        if not os.access(self.ffprobe_path, os.X_OK):
+            raise ValueError(f'ffprobe at {self.ffprobe_path} is not executable')
 
         if self.video_codec != 'copy' and not self.video_bitrate:
             raise ValueError('video_bitrate must be set when video_codec is not "copy"')

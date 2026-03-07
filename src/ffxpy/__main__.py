@@ -10,6 +10,7 @@ from ffxpy import __version__
 from ffxpy.const import Command
 from ffxpy.context import Context, solve_context
 from ffxpy.models.flow import Flow, merge_normalize, split_normalize
+from ffxpy.probe import probe_video
 from ffxpy.setting import Setting
 from ffxpy.vendor import async_typer
 
@@ -142,6 +143,20 @@ async def split(
     if audio_codec:
         setting.audio_codec = audio_codec
     setting.with_suffix = with_suffix
+
+    # Validate input video range
+    try:
+        info = probe_video(input_path, ffprobe_path=setting.ffprobe_path)
+        if setting.start and setting.start > info.duration:
+            raise ValueError(f'start time {start} is out of range ({info.duration})')
+        if setting.end and setting.end > info.duration:
+            raise ValueError(f'end time {end} is out of range ({info.duration})')
+        if setting.start and setting.end and setting.start >= setting.end:
+            raise ValueError(f'start time {start} must be less than end time {end}')
+    except Exception as e:
+        print(f'Error validating input: {e}')
+        raise typer.Exit(code=1)
+
     output_path = setting.output_path
 
     if output_path.is_dir():
