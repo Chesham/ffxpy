@@ -6,6 +6,7 @@ import isodate
 import typer
 import yaml
 
+from ffxpy import __version__
 from ffxpy.const import Command
 from ffxpy.context import Context, solve_context
 from ffxpy.models.flow import Flow, merge_normalize, split_normalize
@@ -13,6 +14,12 @@ from ffxpy.setting import Setting
 from ffxpy.vendor import async_typer
 
 app = async_typer.AsyncTyper(no_args_is_help=True)
+
+
+def version_callback(value: bool):
+    if value:
+        print(f'ffxpy version {__version__}')
+        raise typer.Exit()
 
 
 @app.callback()
@@ -39,6 +46,14 @@ def callback(
         '--overwrite',
         '-y',
         help='Overwrite output file if it exists.',
+    ),
+    version: bool = typer.Option(
+        None,
+        '--version',
+        '-v',
+        help='Show version and exit.',
+        callback=version_callback,
+        is_eager=True,
     ),
 ):
     """
