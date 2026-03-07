@@ -20,7 +20,8 @@ class FlowJob(pydantic.BaseModel):
     @pydantic.model_validator(mode='after')
     def validator(self):
         if self.command == Command.MERGE:
-            # Reset input_path to None for merge jobs to prevent inheritance from flow settings
+            # Reset input_path to None for merge jobs
+            # to prevent inheritance from flow settings
             if not self.setting.input_path:
                 self.setting.input_path = None
         return self
@@ -95,7 +96,9 @@ def merge_normalize(setting: Setting, merge_paths: list[Path] | None = None):
     )
 
     if not setting.output_path:
-        filename = f'{setting.merge_paths[0].stem.split("_split")[0]}{setting.merge_paths[0].suffix}'
+        stem = setting.merge_paths[0].stem.split('_split')[0]
+        suffix = setting.merge_paths[0].suffix
+        filename = f'{stem}{suffix}'
         if setting.output_dir:
             setting.output_path = setting.output_dir / filename
         elif setting.working_dir:

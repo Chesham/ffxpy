@@ -41,9 +41,9 @@ def callback(
         help='Overwrite output file if it exists.',
     ),
 ):
-    '''
+    """
     ffxpy: A tool to simplify complex ffmpeg operations.
-    '''
+    """
     ctx = Context()
     if working_dir:
         ctx.setting.working_dir = working_dir
@@ -125,7 +125,8 @@ async def split(
             return
         if not setting.overwrite:
             raise FileExistsError(
-                f'output_path "{output_path}" already exists. Use --overwrite, -y to overwrite it.'
+                f'output_path "{output_path}" already exists. '
+                'Use --overwrite, -y to overwrite it.'
             )
 
     args = compile_commandline(setting, input_path, output_path)
@@ -182,7 +183,7 @@ async def flow(
 
     pending_tasks = []
     for index, job in enumerate(flow.jobs):
-        job_name = job.name or f'[Unnamed Job]'
+        job_name = job.name or '[Unnamed Job]'
         print(f'Job #{index} {job_name}')
 
         before_inputs = {}
@@ -305,20 +306,11 @@ async def run_ffmpeg(args):
     )
 
     async def stream_output(stream):
-        buf = b""
         while True:
             chunk = await stream.read(1)
             if not chunk:
                 break
             print(chunk.decode('utf-8', errors='replace'), end='', flush=True)
-            # if chunk == b"\r":
-            #     print(buf.decode().rstrip(), end="\r", flush=True)
-            #     buf = b""
-            # elif chunk == b"\n":
-            #     print(buf.decode().rstrip())
-            #     buf = b""
-            # else:
-            #     buf += chunk
 
     tasks = [
         asyncio.create_task(stream_output(process.stdout)),
