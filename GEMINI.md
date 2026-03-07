@@ -1,5 +1,8 @@
 # GEMINI Project Context: ffxpy
 
+> [!IMPORTANT]
+> **Mandate:** Always activate and adhere to the `product-manager` skill when performing tasks related to feature definition, roadmap planning, or requirement analysis for this project.
+
 ## Project Overview
 
 `ffxpy` is a Python command-line tool designed to simplify complex `ffmpeg` operations. It provides a user-friendly interface and a workflow system to chain multiple `ffmpeg` commands together. The project is built using `typer` for the CLI and `pydantic` for data validation and settings management.
