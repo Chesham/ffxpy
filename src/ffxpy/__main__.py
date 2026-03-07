@@ -75,10 +75,19 @@ def parse_duration(duration_str: str):
     except Exception:
         pass
 
-    t = datetime.strptime(duration_str, '%H:%M:%S.%f')
-    return timedelta(
-        hours=t.hour, minutes=t.minute, seconds=t.second, microseconds=t.microsecond
-    )
+    for fmt in ('%H:%M:%S.%f', '%H:%M:%S'):
+        try:
+            t = datetime.strptime(duration_str, fmt)
+            return timedelta(
+                hours=t.hour,
+                minutes=t.minute,
+                seconds=t.second,
+                microseconds=t.microsecond,
+            )
+        except ValueError:
+            pass
+
+    raise ValueError(f'Invalid duration format: {duration_str}')
 
 
 @app.async_command(no_args_is_help=True)

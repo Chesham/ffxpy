@@ -28,7 +28,7 @@ class FlowJob(pydantic.BaseModel):
 
 
 class Flow(pydantic.BaseModel):
-    setting: Setting | None = None
+    setting: Setting = pydantic.Field(default_factory=Setting)
     jobs: list[FlowJob] = pydantic.Field(default_factory=list)
 
     @pydantic.model_validator(mode='after')
@@ -83,17 +83,16 @@ def split_normalize(setting: Setting):
 
 
 def merge_normalize(setting: Setting, merge_paths: list[Path] | None = None):
+    working_dir = setting.working_dir or Path('.')
     if not setting.merge_paths:
         if merge_paths:
             setting.merge_paths = merge_paths
         elif setting.with_split:
             setting.merge_paths = sorted(
-                setting.working_dir.glob('*_split_*', case_sensitive=False)
+                working_dir.glob('*_split_*', case_sensitive=False)
             )
 
-    setting.input_path = (
-        setting.input_path or setting.working_dir / 'ffxpy_merge_list.txt'
-    )
+    setting.input_path = setting.input_path or working_dir / 'ffxpy_merge_list.txt'
 
     if not setting.output_path:
         stem = setting.merge_paths[0].stem.split('_split')[0]
@@ -101,12 +100,12 @@ def merge_normalize(setting: Setting, merge_paths: list[Path] | None = None):
         filename = f'{stem}{suffix}'
         if setting.output_dir:
             setting.output_path = setting.output_dir / filename
-        elif setting.working_dir:
-            setting.output_path = setting.working_dir / filename
+        elif working_dir:
+            setting.output_path = working_dir / filename
         else:
             raise ValueError('no output path specified')
 
-    if setting.output_path.parent == setting.working_dir:
+    if setting.output_path.parent == working_dir:
         setting.output_path = setting.output_path.with_stem(
             f'{setting.output_path.stem}_merged'
         )
