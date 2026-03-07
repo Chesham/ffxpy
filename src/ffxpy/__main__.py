@@ -48,6 +48,12 @@ def callback(
         '-y',
         help='Overwrite output file if it exists.',
     ),
+    dry_run: bool = typer.Option(
+        False,
+        '--dry-run',
+        '-n',
+        help='Do not execute ffmpeg commands, only print them.',
+    ),
     version: bool = typer.Option(
         None,
         '--version',
@@ -72,6 +78,8 @@ def callback(
         ctx.setting.output_path = output_path
     if overwrite is not None:
         ctx.setting.overwrite = overwrite
+    if dry_run:
+        ctx.setting.dry_run = dry_run
     typer_ctx.meta['context'] = ctx
 
 
@@ -174,7 +182,7 @@ async def split(
             )
 
     args = compile_commandline(setting, input_path, output_path)
-    await run_ffmpeg(args)
+    await run_ffmpeg(args, dry_run=setting.dry_run)
 
 
 @app.async_command(no_args_is_help=True)
@@ -206,7 +214,7 @@ async def merge(
             ''.join(f"file '{path.resolve()}'\n" for path in setting.merge_paths)
         )
 
-    await run_ffmpeg(args)
+    await run_ffmpeg(args, dry_run=setting.dry_run)
 
 
 @app.async_command(no_args_is_help=True)
@@ -259,9 +267,9 @@ async def flow(
             if pending_tasks:
                 await asyncio.gather(*pending_tasks)
                 pending_tasks.clear()
-            await run_ffmpeg(args)
+            await run_ffmpeg(args, dry_run=setting.dry_run)
         else:
-            task = asyncio.create_task(run_ffmpeg(args))
+            task = asyncio.create_task(run_ffmpeg(args, dry_run=setting.dry_run))
             pending_tasks.append(task)
 
     if pending_tasks:
@@ -283,7 +291,7 @@ async def flow(
 async def exec(ctx_: typer.Context):
     ctx = solve_context(ctx_)
     args = [ctx.setting.ffmpeg_path, *ctx_.args]
-    await run_ffmpeg(args)
+    await run_ffmpeg(args, dry_run=setting.dry_run)
 
 
 def compile_commandline(
@@ -342,7 +350,12 @@ def timedelta_to_padded_str(td: timedelta):
     return f'PT{hours:02}H{minutes:02}M{seconds:02}S'
 
 
-async def run_ffmpeg(args):
+async def run_ffmpeg(args, dry_run: bool = False):
+    cmd_str = ' '.join(str(arg) for arg in args)
+    if dry_run:
+        print(f'Dry-run: {cmd_str}')
+        return
+
     process = await asyncio.create_subprocess_exec(
         *[str(arg) for arg in args],
         stdout=asyncio.subprocess.PIPE,

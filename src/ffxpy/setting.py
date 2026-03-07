@@ -32,6 +32,7 @@ class Setting(pydantic_settings.BaseSettings):
     rc: str = 'vbr'
     start: timedelta | None = None
     end: timedelta | None = None
+    dry_run: bool = False
     overwrite: bool = False
     skip_existing: bool = False
     with_suffix: bool = True

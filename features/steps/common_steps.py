@@ -55,11 +55,20 @@ def step_then_file_should_exist(context, file_path):
     file_path = file_path.replace('{video_5s}', str(context.video_5s))
     full_path = context.working_dir / file_path
     if not full_path.exists():
-        print(f"File not found: {full_path}")
-        print(f"Files in {context.working_dir}:")
+        print(f'File not found: {full_path}')
+        print(f'Files in {context.working_dir}:')
         for f in context.working_dir.iterdir():
-            print(f"  {f.name}")
+            print(f'  {f.name}')
     full_path.exists() | should.be.true
+
+
+@then('檔案 "{file_path}" 應該不存在')
+def step_then_file_should_not_exist(context, file_path):
+    # Dynamic replacement for test files
+    file_path = file_path.replace('{video_5s}', str(context.video_5s))
+    full_path = context.working_dir / file_path
+    full_path.exists() | should.be.false
+
 
 
 @given('我建立檔案 "{file_name}"，內容如下')
