@@ -21,11 +21,25 @@ lint:
 
 test:
   stage: test
+  needs: ["extract-ffmpeg"]
   before_script:
-    - apt-get update && apt-get install -y ffmpeg
+    # 從 artifacts 取得 ffmpeg 並放置到系統路徑
+    - mv ffmpeg ffprobe /usr/local/bin/
+    - chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe
   script:
     - uv sync --frozen --cache-dir $UV_CACHE_DIR
     - uv run behave
+
+extract-ffmpeg:
+  stage: .pre
+  image: mwader/static-ffmpeg:7.1
+  script:
+    - cp /ffmpeg /ffprobe .
+  artifacts:
+    paths:
+      - ffmpeg
+      - ffprobe
+    expire_in: 1 hour
 
 .docker_job:
   # 使用包含 git 的 docker 映像檔，或在 before_script 安裝
