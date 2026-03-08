@@ -361,63 +361,70 @@ async def flow(
                 progress=progress,
             )
 
-    with progress:
-        for index, job in enumerate(flow_data.jobs):
-            job_name = job.name or f'Job #{index}'
-
-            before_inputs = {}
-            if job.command == Command.MERGE:
-                before_inputs = {
-                    '-f': 'concat',
-                    '-safe': '0',
-                }
-                if job.setting.input_path:
-                    job.setting.input_path.write_text(
-                        ''.join(
-                            f"file '{path.resolve()}'\n"
-                            for path in job.setting.merge_paths
-                        )
-                    )
-
-            if not job.setting.overwrite and job.setting.skip_existing:
-                if job.setting.output_path and job.setting.output_path.exists():
-                    console.print(f'Skip existing file: "{job.setting.output_path}"')
-                    continue
-
-            if not job.setting.input_path:
-                raise ValueError(f'job {job_name} has no input path')
-            if not job.setting.output_path:
-                raise ValueError(f'job {job_name} has no output path')
-
-            args = compile_commandline(
-                job.setting,
-                job.setting.input_path,
-                job.setting.output_path,
-                before_inputs=before_inputs,
-            )
-
-            if job.command == Command.MERGE:
-                if pending_tasks:
-                    try:
-                        await asyncio.gather(*pending_tasks)
-                    except Exception:
-                        raise typer.Exit(code=1)
-                    pending_tasks.clear()
-                await run_ffmpeg(
-                    args,
-                    dry_run=setting.dry_run,
-                    job_name=job_name,
-                    progress=progress,
-                )
-            else:
-                task = asyncio.create_task(run_job(job, args, job_name))
-                pending_tasks.append(task)
-
+    async def cancel_pending_tasks():
+        for task in pending_tasks:
+            if not task.done():
+                task.cancel()
         if pending_tasks:
-            try:
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
+
+    try:
+        with progress:
+            for index, job in enumerate(flow_data.jobs):
+                job_name = job.name or f'Job #{index}'
+
+                before_inputs = {}
+                if job.command == Command.MERGE:
+                    before_inputs = {
+                        '-f': 'concat',
+                        '-safe': '0',
+                    }
+                    if job.setting.input_path:
+                        job.setting.input_path.write_text(
+                            ''.join(
+                                f"file '{path.resolve()}'\n"
+                                for path in job.setting.merge_paths
+                            )
+                        )
+
+                if not job.setting.overwrite and job.setting.skip_existing:
+                    if job.setting.output_path and job.setting.output_path.exists():
+                        console.print(
+                            f'Skip existing file: "{job.setting.output_path}"'
+                        )
+                        continue
+
+                if not job.setting.input_path:
+                    raise ValueError(f'job {job_name} has no input path')
+                if not job.setting.output_path:
+                    raise ValueError(f'job {job_name} has no output path')
+
+                args = compile_commandline(
+                    job.setting,
+                    job.setting.input_path,
+                    job.setting.output_path,
+                    before_inputs=before_inputs,
+                )
+
+                if job.command == Command.MERGE:
+                    if pending_tasks:
+                        await asyncio.gather(*pending_tasks)
+                        pending_tasks.clear()
+                    await run_ffmpeg(
+                        args,
+                        dry_run=setting.dry_run,
+                        job_name=job_name,
+                        progress=progress,
+                    )
+                else:
+                    task = asyncio.create_task(run_job(job, args, job_name))
+                    pending_tasks.append(task)
+
+            if pending_tasks:
                 await asyncio.gather(*pending_tasks)
-            except Exception:
-                raise typer.Exit(code=1)
+    except Exception:
+        await cancel_pending_tasks()
+        raise typer.Exit(code=1)
 
     end_time = time.perf_counter()
     total_duration = end_time - start_time
