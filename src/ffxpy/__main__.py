@@ -277,12 +277,12 @@ async def flow(
         cpu_count = os.cpu_count() or 1
 
         if is_all_copy:
-            # Pure copy mode: Very aggressive (up to 32)
-            turbo_concurrency = min(max(cpu_count // 2, current_default), 32)
-            msg = 'All jobs are "copy", boosting to maximum performance'
-        elif has_copy:
-            # Mixed mode: Moderately aggressive (up to 16)
+            # Pure copy mode: Still fairly aggressive but safer (up to 16)
             turbo_concurrency = min(max(cpu_count // 4, current_default), 16)
+            msg = 'All jobs are "copy", boosting to maximum I/O performance'
+        elif has_copy:
+            # Mixed mode: Conservative boost (up to 8)
+            turbo_concurrency = min(max(cpu_count // 8, current_default), 8)
             msg = f'Mixed flow with {len(copy_jobs)} "copy" jobs, boosting performance'
         else:
             turbo_concurrency = flow_data.setting.concurrency
