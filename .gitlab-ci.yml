@@ -20,30 +20,13 @@ lint:
     - uv run ruff check .
 
 test:
-  stage: test
-  needs: ["extract-ffmpeg"]
-  before_script:
-    # 從 artifacts 取得 ffmpeg 並放置到系統路徑
-    - mv ffmpeg ffprobe /usr/local/bin/
-    - chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe
-  script:
-    - uv sync --frozen --cache-dir $UV_CACHE_DIR
-    - uv run behave
-
-extract-ffmpeg:
   extends: .docker_job
-  stage: .pre
+  stage: test
   script:
-    # 建立一個臨時容器（不需要啟動），然後直接從中複製檔案
-    - docker create --name temp_ffmpeg mwader/static-ffmpeg:7.1
-    - docker cp temp_ffmpeg:/ffmpeg ./ffmpeg
-    - docker cp temp_ffmpeg:/ffprobe ./ffprobe
-    - docker rm temp_ffmpeg
-  artifacts:
-    paths:
-      - ffmpeg
-      - ffprobe
-    expire_in: 1 hour
+    # 建立測試映像檔，並在裡面執行 BDD 測試
+    # 如果 Dockerfile 中 ffmpeg 那一層沒變，第二次跑就會極快
+    - docker build --target test -t ffxpy-test .
+    - docker run --rm ffxpy-test
 
 .docker_job:
   # 升級 Docker 版本以支援較新的 API (1.44+)
