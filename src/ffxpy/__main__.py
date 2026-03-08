@@ -272,7 +272,8 @@ async def flow(
 
     async def run_job(job, job_args, job_name):
         async with semaphore:
-            # Get duration if it's a split job (inside semaphore to avoid overhead during launch)
+            # Get duration if it's a split job
+            # (inside semaphore to avoid overhead during launch)
             job_duration = None
             if job.command == Command.SPLIT:
                 try:

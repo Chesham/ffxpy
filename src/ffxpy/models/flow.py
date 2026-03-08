@@ -40,7 +40,9 @@ class Flow(pydantic.BaseModel):
         if context_setting and isinstance(context_setting, Setting):
             # Merge context setting with data['setting'] if exists
             yaml_setting_data = data.get('setting', {})
-            merged_setting = context_setting.model_dump(exclude_unset=True) | yaml_setting_data
+            merged_setting = (
+                context_setting.model_dump(exclude_unset=True) | yaml_setting_data
+            )
             data['setting'] = merged_setting
         return data
 

@@ -7,6 +7,18 @@ import pydantic
 import pydantic_settings
 
 
+def get_default_concurrency() -> int:
+    try:
+        cores = os.cpu_count() or 1
+        if cores >= 32:
+            return 4
+        if cores >= 16:
+            return 2
+    except Exception:
+        pass
+    return 1
+
+
 class Setting(pydantic_settings.BaseSettings):
     model_config = pydantic_settings.SettingsConfigDict(
         env_file='.env',
@@ -33,7 +45,7 @@ class Setting(pydantic_settings.BaseSettings):
     start: timedelta | None = None
     end: timedelta | None = None
     dry_run: bool = False
-    concurrency: int = 1
+    concurrency: int = pydantic.Field(default_factory=get_default_concurrency)
     overwrite: bool = False
     skip_existing: bool = False
     with_suffix: bool = True
