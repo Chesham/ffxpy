@@ -324,11 +324,34 @@ async def flow(
                     info = await probe_video(
                         job.setting.input_path, ffprobe_path=job.setting.ffprobe_path
                     )
+                    # Range validation
+                    if job.setting.start and job.setting.start > info.duration:
+                        raise ValueError(
+                            f'start time {job.setting.start} is out of range '
+                            f'({info.duration})'
+                        )
+                    if job.setting.end and job.setting.end > info.duration:
+                        raise ValueError(
+                            f'end time {job.setting.end} is out of range '
+                            f'({info.duration})'
+                        )
+                    if (
+                        job.setting.start
+                        and job.setting.end
+                        and job.setting.start >= job.setting.end
+                    ):
+                        raise ValueError(
+                            f'start time {job.setting.start} must be less than '
+                            f'end time {job.setting.end}'
+                        )
+
                     actual_start = job.setting.start or timedelta(0)
                     actual_end = job.setting.end or info.duration
                     job_duration = actual_end - actual_start
-                except Exception:
-                    pass
+                except Exception as e:
+                    console.print(f'[red]Error validating job "{job_name}":[/red] {e}')
+                    # We raise here to let the task fail and stop the flow
+                    raise
 
             return await run_ffmpeg(
                 job_args,
@@ -375,7 +398,10 @@ async def flow(
 
             if job.command == Command.MERGE:
                 if pending_tasks:
-                    await asyncio.gather(*pending_tasks)
+                    try:
+                        await asyncio.gather(*pending_tasks)
+                    except Exception:
+                        raise typer.Exit(code=1)
                     pending_tasks.clear()
                 await run_ffmpeg(
                     args,
@@ -388,7 +414,10 @@ async def flow(
                 pending_tasks.append(task)
 
         if pending_tasks:
-            await asyncio.gather(*pending_tasks)
+            try:
+                await asyncio.gather(*pending_tasks)
+            except Exception:
+                raise typer.Exit(code=1)
 
     end_time = time.perf_counter()
     total_duration = end_time - start_time
