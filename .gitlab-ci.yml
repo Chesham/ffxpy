@@ -5,6 +5,8 @@ stages:
 
 variables:
   PYTHON_VERSION: "3.13"
+  # 指向 Runner 掛載的 WSL 快取目錄
+  UV_CACHE_DIR: "/cache/uv"
 
 default:
   image:
@@ -14,7 +16,7 @@ default:
 lint:
   stage: test
   script:
-    - uv sync
+    - uv sync --frozen --cache-dir $UV_CACHE_DIR
     - uv run ruff check .
 
 test:
@@ -22,7 +24,7 @@ test:
   before_script:
     - apt-get update && apt-get install -y ffmpeg
   script:
-    - uv sync
+    - uv sync --frozen --cache-dir $UV_CACHE_DIR
     - uv run behave
 
 .docker_job:
