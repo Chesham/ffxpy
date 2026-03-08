@@ -257,6 +257,15 @@ async def flow(
     pending_tasks = []
     semaphore = asyncio.Semaphore(flow_data.setting.concurrency)
 
+    progress = Progress(
+        TextColumn('[progress.description]{task.description}'),
+        BarColumn(),
+        '[progress.percentage]{task.percentage:>3.0f}%',
+        TimeRemainingColumn(),
+        console=console,
+        transient=True,
+    )
+
     async def run_job(job_args, job_duration, job_name):
         async with semaphore:
             return await run_ffmpeg(
@@ -264,59 +273,66 @@ async def flow(
                 dry_run=setting.dry_run,
                 total_duration=job_duration,
                 job_name=job_name,
+                progress=progress,
             )
 
-    for index, job in enumerate(flow_data.jobs):
-        job_name = job.name or f'Job #{index}'
+    with progress:
+        for index, job in enumerate(flow_data.jobs):
+            job_name = job.name or f'Job #{index}'
 
-        before_inputs = {}
-        if job.command == Command.MERGE:
-            before_inputs = {
-                '-f': 'concat',
-                '-safe': '0',
-            }
-            job.setting.input_path.write_text(
-                ''.join(
-                    f"file '{path.resolve()}'\n" for path in job.setting.merge_paths
+            before_inputs = {}
+            if job.command == Command.MERGE:
+                before_inputs = {
+                    '-f': 'concat',
+                    '-safe': '0',
+                }
+                job.setting.input_path.write_text(
+                    ''.join(
+                        f"file '{path.resolve()}'\n" for path in job.setting.merge_paths
+                    )
                 )
+
+            if not job.setting.overwrite and job.setting.skip_existing:
+                if job.setting.output_path and job.setting.output_path.exists():
+                    console.print(f'Skip existing file: "{job.setting.output_path}"')
+                    continue
+
+            args = compile_commandline(
+                job.setting,
+                job.setting.input_path,
+                job.setting.output_path,
+                before_inputs=before_inputs,
             )
 
-        if not job.setting.overwrite and job.setting.skip_existing:
-            if job.setting.output_path and job.setting.output_path.exists():
-                console.print(f'Skip existing file: "{job.setting.output_path}"')
-                continue
+            # Get duration if it's a split job
+            job_duration = None
+            if job.command == Command.SPLIT:
+                try:
+                    info = probe_video(
+                        job.setting.input_path, ffprobe_path=job.setting.ffprobe_path
+                    )
+                    actual_start = job.setting.start or timedelta(0)
+                    actual_end = job.setting.end or info.duration
+                    job_duration = actual_end - actual_start
+                except Exception:
+                    pass
 
-        args = compile_commandline(
-            job.setting,
-            job.setting.input_path,
-            job.setting.output_path,
-            before_inputs=before_inputs,
-        )
-
-        # Get duration if it's a split job
-        job_duration = None
-        if job.command == Command.SPLIT:
-            try:
-                info = probe_video(
-                    job.setting.input_path, ffprobe_path=job.setting.ffprobe_path
+            if job.command == Command.MERGE:
+                if pending_tasks:
+                    await asyncio.gather(*pending_tasks)
+                    pending_tasks.clear()
+                await run_ffmpeg(
+                    args,
+                    dry_run=setting.dry_run,
+                    job_name=job_name,
+                    progress=progress,
                 )
-                actual_start = job.setting.start or timedelta(0)
-                actual_end = job.setting.end or info.duration
-                job_duration = actual_end - actual_start
-            except Exception:
-                pass
+            else:
+                task = asyncio.create_task(run_job(args, job_duration, job_name))
+                pending_tasks.append(task)
 
-        if job.command == Command.MERGE:
-            if pending_tasks:
-                await asyncio.gather(*pending_tasks)
-                pending_tasks.clear()
-            await run_ffmpeg(args, dry_run=setting.dry_run, job_name=job_name)
-        else:
-            task = asyncio.create_task(run_job(args, job_duration, job_name))
-            pending_tasks.append(task)
-
-    if pending_tasks:
-        await asyncio.gather(*pending_tasks)
+        if pending_tasks:
+            await asyncio.gather(*pending_tasks)
 
     if not flow_data.setting.keep_temp:
         for job in flow_data.jobs:
@@ -390,6 +406,7 @@ async def run_ffmpeg(
     dry_run: bool = False,
     total_duration: timedelta | None = None,
     job_name: str | None = None,
+    progress: Progress | None = None,
 ):
     cmd_str = ' '.join(str(arg) for arg in args)
     if dry_run:
@@ -402,14 +419,17 @@ async def run_ffmpeg(
         stderr=asyncio.subprocess.PIPE,
     )
 
-    progress = Progress(
-        TextColumn('[progress.description]{task.description}'),
-        BarColumn(),
-        '[progress.percentage]{task.percentage:>3.0f}%',
-        TimeRemainingColumn(),
-        console=console,
-        transient=True,
-    )
+    internal_progress = False
+    if progress is None:
+        progress = Progress(
+            TextColumn('[progress.description]{task.description}'),
+            BarColumn(),
+            '[progress.percentage]{task.percentage:>3.0f}%',
+            TimeRemainingColumn(),
+            console=console,
+            transient=True,
+        )
+        internal_progress = True
 
     task_id = progress.add_task(
         description=job_name or 'Processing...',
@@ -432,7 +452,14 @@ async def run_ffmpeg(
                     current_seconds = hours * 3600 + minutes * 60 + seconds
                     progress.update(task_id, completed=current_seconds)
 
-    with progress:
+    if internal_progress:
+        with progress:
+            await asyncio.gather(
+                stream_output(process.stdout),
+                stream_output(process.stderr, is_stderr=True),
+                process.wait(),
+            )
+    else:
         await asyncio.gather(
             stream_output(process.stdout),
             stream_output(process.stderr, is_stderr=True),
