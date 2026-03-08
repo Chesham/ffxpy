@@ -33,6 +33,8 @@ The `ffx` command supports several global options that apply to all subcommands:
 - `--working-dir`, `-w`: Working directory.
 - `--output-path`, `-o`: Output video file path.
 - `--overwrite`, `-y`: Overwrite output file if it exists.
+- `--dry-run`, `-n`: Print ffmpeg commands without executing them.
+- `--concurrency`, `-c`: Manually override the dynamic concurrency logic.
 
 **General Usage:**
 ```bash
@@ -83,8 +85,10 @@ jobs:
 *   **CLI:** The project uses `async_typer` to build the command-line interface. New commands and options should be added in `src/ffxpy/__main__.py`.
 *   **Settings:** Application settings are managed with `pydantic-settings` in `src/ffxpy/setting.py`. Settings can be provided via a `.env` file (with `FFXPY_` prefix) or as command-line arguments.
 *   **Data Models:** Data structures for flows and jobs are defined using `pydantic` in `src/ffxpy/models/flow.py`.
+*   **Concurrency:** The system employs "Smart Concurrency" which dynamically adjusts based on CPU cores and job types (e.g., boosting for 'copy' tasks up to 16, limiting for 'encoding' tasks to 2 to avoid resource contention).
 *   **Dependencies:** Project dependencies are listed in `pyproject.toml`.
-*   **TODO:** No testing framework is explicitly configured yet. Consider adding `behave` and `grappa` for testing and using Behavior-Driven Development (BDD) practices.
+*   **Testing:** The project uses `behave` and `grappa` for Behavior-Driven Development (BDD). Feature files are located in the `features/` directory.
+*   **Progress Tracking:** Real-time progress is displayed using `rich`. The `flow` command features a smooth overall progress bar based on total job durations.
 
 ## Agent Communication Protocol
 
