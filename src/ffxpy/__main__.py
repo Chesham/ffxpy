@@ -1,7 +1,6 @@
 import asyncio
 import os
 import re
-import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -13,6 +12,7 @@ from rich.console import Console
 from rich.progress import (
     BarColumn,
     Progress,
+    TaskID,
     TextColumn,
     TimeElapsedColumn,
     TimeRemainingColumn,
@@ -271,8 +271,6 @@ async def flow(
         yaml.safe_load(flow_path.open()), context={'setting': setting}
     )
 
-    start_time = time.perf_counter()
-
     # Smart Concurrency: Boost if we have many 'copy' jobs
     copy_jobs = [
         j
@@ -348,6 +346,22 @@ async def flow(
             except Exception as e:
                 console.print(f'[red]Validation failed for "{job_name}":[/red] {e}')
                 raise typer.Exit(code=1)
+        elif job.command == Command.MERGE:
+            if job.setting.merge_paths:
+                total_merge_duration = timedelta(0)
+                for path in job.setting.merge_paths:
+                    try:
+                        info = await probe_video(
+                            path, ffprobe_path=job.setting.ffprobe_path
+                        )
+                        total_merge_duration += info.duration
+                    except Exception:
+                        # If we can't probe one of the files, we might not have
+                        # accurate total duration
+                        pass
+                if total_merge_duration.total_seconds() > 0:
+                    job_duration = total_merge_duration
+
         job_durations.append(job_duration)
 
     # Phase 2: Execution (Start making changes)
@@ -365,15 +379,24 @@ async def flow(
         transient=False,
     )
 
+    total_seconds = sum(
+        (d.total_seconds() if d is not None else 1) for d in job_durations
+    ) or len(flow_data.jobs)
+    master_task_id = progress.add_task(
+        '[bold cyan]Overall Progress[/bold cyan]', total=total_seconds, metrics=''
+    )
+
     async def run_job(job_args, job_duration, job_name):
         async with semaphore:
-            return await run_ffmpeg(
+            result = await run_ffmpeg(
                 job_args,
                 dry_run=setting.dry_run,
                 total_duration=job_duration,
                 job_name=job_name,
                 progress=progress,
+                master_task_id=master_task_id,
             )
+            return result
 
     async def cancel_pending_tasks():
         for task in pending_tasks:
@@ -407,6 +430,12 @@ async def flow(
                         console.print(
                             f'Skip existing file: "{job.setting.output_path}"'
                         )
+                        advance_amount = (
+                            job_duration.total_seconds()
+                            if job_duration is not None
+                            else 1
+                        )
+                        progress.advance(master_task_id, advance=advance_amount)
                         continue
 
                 if not job.setting.input_path:
@@ -428,8 +457,10 @@ async def flow(
                     await run_ffmpeg(
                         args,
                         dry_run=setting.dry_run,
+                        total_duration=job_duration,
                         job_name=job_name,
                         progress=progress,
+                        master_task_id=master_task_id,
                     )
                 else:
                     task = asyncio.create_task(run_job(args, job_duration, job_name))
@@ -440,16 +471,6 @@ async def flow(
     except Exception:
         await cancel_pending_tasks()
         raise typer.Exit(code=1)
-
-    end_time = time.perf_counter()
-    total_duration = end_time - start_time
-    job_count = len(flow_data.jobs)
-    avg_duration = total_duration / job_count if job_count > 0 else 0
-
-    console.print('\n[bold green]Flow Completed![/bold green]')
-    console.print(f'  Total Jobs: {job_count}')
-    console.print(f'  Total Time: [cyan]{total_duration:.2f}s[/cyan]')
-    console.print(f'  Avg / Job : [cyan]{avg_duration:.2f}s[/cyan]')
 
     if not flow_data.setting.keep_temp:
         for job in flow_data.jobs:
@@ -557,6 +578,7 @@ async def run_ffmpeg(
     total_duration: timedelta | None = None,
     job_name: str | None = None,
     progress: Progress | None = None,
+    master_task_id: TaskID | None = None,
 ):
     cmd_str = ' '.join(str(arg) for arg in args)
     if dry_run:
@@ -592,11 +614,14 @@ async def run_ffmpeg(
     )
 
     # Shared state for progress metrics to prevent overwriting
-    progress_state = {'fps': None, 'speed': None}
+    progress_state: dict[str, str | None] = {'fps': None, 'speed': None}
+    last_completed = 0.0
 
     async def stream_output(stream: asyncio.StreamReader):
+        nonlocal last_completed
         # ffmpeg outputs progress to stderr
-        # Robust pattern for time: allows optional leading spaces and optional fractional part
+        # Robust pattern for time: allows optional leading spaces and
+        # optional fractional part
         time_pattern = re.compile(r'time=\s*(\d+):(\d+):(\d+)(?:\.(\d+))?')
         speed_pattern = re.compile(r'speed=\s*([\d.]+x)')
         fps_pattern = re.compile(r'fps=\s*([\d.]+)')
@@ -632,8 +657,10 @@ async def run_ffmpeg(
                 # Update progress and metrics
                 update_kwargs: dict[str, Any] = {}
 
-                # Distinguish between machine-readable progress (-progress pipe:2) and legacy status line
-                # Machine-readable lines have exactly one '=' and no internal spaces in the key.
+                # Distinguish between machine-readable progress (-progress pipe:2)
+                # and legacy status line
+                # Machine-readable lines have exactly one '=' and no internal
+                # spaces in the key.
                 is_machine_format = (
                     '=' in line_str
                     and ' ' not in line_str.partition('=')[0].strip()
@@ -686,7 +713,14 @@ async def run_ffmpeg(
 
                 if update_kwargs:
                     if 'completed' in update_kwargs and total_duration is not None:
+                        new_completed = float(update_kwargs['completed'])
+                        delta = new_completed - last_completed
+                        last_completed = new_completed
+
                         update_kwargs['total'] = total_duration.total_seconds()
+                        if master_task_id is not None:
+                            progress.advance(master_task_id, advance=delta)
+
                     progress.update(task_id, **update_kwargs)
 
     if not process.stderr:
@@ -706,10 +740,16 @@ async def run_ffmpeg(
 
     # Force completion to 100% regardless of ffmpeg output timing
     if total_duration:
-        progress.update(task_id, completed=total_duration.total_seconds())
+        new_completed = total_duration.total_seconds()
+        delta = new_completed - last_completed
+        progress.update(task_id, completed=new_completed)
+        if master_task_id is not None:
+            progress.advance(master_task_id, advance=delta)
     else:
         # For tasks without known duration (like merge), mark as finished
         progress.update(task_id, total=100, completed=100)
+        if master_task_id is not None:
+            progress.advance(master_task_id, advance=1)
 
     if process.returncode != 0:
         console.print(f'[red]Error:[/red] ffmpeg exited with code {process.returncode}')

@@ -75,16 +75,6 @@ jobs:
 uv run ffx flow example_flow.yml
 ```
 
-### 4. Performance Feedback
-
-At the end of every flow, `ffxpy` provides a performance summary:
-```
-Flow Completed!
-  Total Jobs: 3
-  Total Time: 45.12s
-  Avg / Job : 15.04s
-```
-
 ## Development and Quality
 
 The project maintains high engineering standards:
