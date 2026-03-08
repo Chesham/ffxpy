@@ -32,7 +32,9 @@ test:
 
 extract-ffmpeg:
   stage: .pre
-  image: mwader/static-ffmpeg:7.1
+  image:
+    name: mwader/static-ffmpeg:7.1
+    entrypoint: [""]
   script:
     - cp /ffmpeg /ffprobe .
   artifacts:
