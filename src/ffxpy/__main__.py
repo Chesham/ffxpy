@@ -4,6 +4,7 @@ import re
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import isodate
 import typer
@@ -357,6 +358,7 @@ async def flow(
         TextColumn('[progress.description]{task.description}'),
         BarColumn(),
         '[progress.percentage]{task.percentage:>3.0f}%',
+        TextColumn('{task.fields[metrics]}'),
         TimeElapsedColumn(),
         TimeRemainingColumn(),
         console=console,
@@ -477,23 +479,42 @@ def compile_commandline(
     after_inputs: dict[str, str] | None = None,
 ) -> list[str]:
     args = [setting.ffmpeg_path]
+    # Global flags
+    args += ['-hide_banner', '-stats', '-progress', 'pipe:2']
+
+    # Custom flags before input
     if before_inputs:
-        args += [str(item) for pair in before_inputs.items() for item in pair]
-    input_path_final = input_path
-    if setting.working_dir and not input_path.is_absolute():
-        input_path_final = setting.working_dir / input_path.name
-    if setting.video_codec == 'copy':
+        for k, v in before_inputs.items():
+            if k in ['-hide_banner', '-stats', '-progress']:
+                continue
+            args += [str(k), str(v)]
+
+    # Intelligent seeking: Fast seek for 'copy', Accurate seek for re-encoding
+    # Benefit of Fast Seek: Fast, doesn't need to decode the whole stream.
+    # Cost of Fast Seek: Not frame-accurate (snaps to nearest keyframe).
+    is_copy = setting.video_codec == 'copy'
+
+    if is_copy:
         if setting.start:
             args += ['-ss', str(setting.start)]
         if setting.end:
             args += ['-to', str(setting.end)]
+
+    input_path_final = input_path
+    if setting.working_dir and not input_path.is_absolute():
+        input_path_final = setting.working_dir / input_path.name
+
     args += ['-i', str(input_path_final)]
+
+    if not is_copy:
+        if setting.start:
+            args += ['-ss', str(setting.start)]
+        if setting.end:
+            args += ['-to', str(setting.end)]
+
     if after_inputs:
         args += [str(item) for pair in after_inputs.items() for item in pair]
-    if setting.start and '-ss' not in args:
-        args += ['-ss', str(setting.start)]
-    if setting.end and '-to' not in args:
-        args += ['-to', str(setting.end)]
+
     if setting.scale:
         args += ['-vf', f'scale={setting.scale}']
     args += ['-c:v', setting.video_codec, '-c:a', setting.audio_codec]
@@ -531,7 +552,8 @@ async def run_ffmpeg(
 
     process = await asyncio.create_subprocess_exec(
         *[str(arg) for arg in args],
-        stdout=asyncio.subprocess.PIPE,
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,
     )
 
@@ -541,6 +563,7 @@ async def run_ffmpeg(
             TextColumn('[progress.description]{task.description}'),
             BarColumn(),
             '[progress.percentage]{task.percentage:>3.0f}%',
+            TextColumn('{task.fields[metrics]}'),
             TimeElapsedColumn(),
             TimeRemainingColumn(),
             console=console,
@@ -551,39 +574,120 @@ async def run_ffmpeg(
 
     task_id = progress.add_task(
         description=job_name or 'Processing...',
-        total=total_duration.total_seconds() if total_duration else None,
+        total=None,
+        metrics='',
     )
 
-    async def stream_output(stream: asyncio.StreamReader, is_stderr: bool = False):
+    # Shared state for progress metrics to prevent overwriting
+    progress_state = {'fps': None, 'speed': None}
+
+    async def stream_output(stream: asyncio.StreamReader):
         # ffmpeg outputs progress to stderr
-        time_pattern = re.compile(r'time=(\d+):(\d+):(\d+)\.(\d+)')
+        # Robust pattern for time: allows optional leading spaces and optional fractional part
+        time_pattern = re.compile(r'time=\s*(\d+):(\d+):(\d+)(?:\.(\d+))?')
+        speed_pattern = re.compile(r'speed=\s*([\d.]+x)')
+        fps_pattern = re.compile(r'fps=\s*([\d.]+)')
+
+        buffer = b''
         while True:
-            line = await stream.readline()
-            if not line:
+            # Read chunks instead of lines to catch \r
+            chunk = await stream.read(1024)
+            if not chunk:
                 break
 
-            line_str = line.decode('utf-8', errors='replace').strip()
-            if is_stderr and total_duration:
-                match = time_pattern.search(line_str)
-                if match:
-                    hours, minutes, seconds, _ = map(int, match.groups())
-                    current_seconds = hours * 3600 + minutes * 60 + seconds
-                    progress.update(task_id, completed=current_seconds)
+            buffer += chunk
+            # Robust line splitting
+            while True:
+                r_idx = buffer.find(b'\r')
+                n_idx = buffer.find(b'\n')
+                if r_idx == -1 and n_idx == -1:
+                    break
 
-    if not process.stdout or not process.stderr:
-        raise RuntimeError('ffmpeg process failed to start streams')
+                split_idx = (
+                    min(r_idx, n_idx)
+                    if r_idx != -1 and n_idx != -1
+                    else (r_idx if r_idx != -1 else n_idx)
+                )
+                line_bytes = buffer[:split_idx]
+                buffer = buffer[split_idx + 1 :]
+
+                line_str = line_bytes.decode('utf-8', errors='replace').strip()
+
+                if not line_str:
+                    continue
+
+                # Update progress and metrics
+                update_kwargs: dict[str, Any] = {}
+
+                # Distinguish between machine-readable progress (-progress pipe:2) and legacy status line
+                # Machine-readable lines have exactly one '=' and no internal spaces in the key.
+                is_machine_format = (
+                    '=' in line_str
+                    and ' ' not in line_str.partition('=')[0].strip()
+                    and line_str.count('=') == 1
+                )
+
+                if is_machine_format:
+                    key, _, value = line_str.partition('=')
+                    key, value = key.strip(), value.strip()
+
+                    if key == 'out_time' and total_duration:
+                        time_match = time_pattern.search(f'time={value}')
+                        if time_match:
+                            groups = time_match.groups()
+                            hours, minutes, seconds = map(int, groups[:3])
+                            update_kwargs['completed'] = (
+                                hours * 3600 + minutes * 60 + seconds
+                            )
+                    elif key == 'fps':
+                        try:
+                            f_val = float(value)
+                            if f_val > 0:
+                                progress_state['fps'] = f'{value}fps'
+                        except ValueError:
+                            pass
+                    elif key == 'speed':
+                        if value != 'N/A':
+                            progress_state['speed'] = value
+                else:
+                    # Legacy status line parsing (can have multiple '=' or spaces)
+                    time_match = time_pattern.search(line_str)
+                    if time_match and total_duration:
+                        groups = time_match.groups()
+                        hours, minutes, seconds = map(int, groups[:3])
+                        update_kwargs['completed'] = (
+                            hours * 3600 + minutes * 60 + seconds
+                        )
+
+                    speed_match = speed_pattern.search(line_str)
+                    fps_match = fps_pattern.search(line_str)
+                    if fps_match:
+                        progress_state['fps'] = f'{fps_match.group(1)}fps'
+                    if speed_match:
+                        progress_state['speed'] = speed_match.group(1)
+
+                # Always build metrics string from persistent state
+                display_parts = [v for v in progress_state.values() if v]
+                if display_parts:
+                    update_kwargs['metrics'] = f'({", ".join(display_parts)})'
+
+                if update_kwargs:
+                    if 'completed' in update_kwargs and total_duration is not None:
+                        update_kwargs['total'] = total_duration.total_seconds()
+                    progress.update(task_id, **update_kwargs)
+
+    if not process.stderr:
+        raise RuntimeError('ffmpeg process failed to start stderr stream')
 
     if internal_progress:
         with progress:
             await asyncio.gather(
-                stream_output(process.stdout),
-                stream_output(process.stderr, is_stderr=True),
+                stream_output(process.stderr),
                 process.wait(),
             )
     else:
         await asyncio.gather(
-            stream_output(process.stdout),
-            stream_output(process.stderr, is_stderr=True),
+            stream_output(process.stderr),
             process.wait(),
         )
 
