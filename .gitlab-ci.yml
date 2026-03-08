@@ -34,12 +34,11 @@ test:
     DOCKER_BUILDKIT: "0"
     # 使用專案路徑 slug，保證在同一個 Runner 上唯一且不依賴 Registry 服務
     IMAGE_NAME: ${CI_PROJECT_PATH_SLUG}
-  only:
-    - tags
   before_script:
     # 確保環境中有 git 以便取得版本號
     - apk add --no-cache git
-    - export FQIN=${IMAGE_NAME}:${CI_COMMIT_TAG}
+    # 優先使用 Tag，否則使用 commit SHA 作為映像檔標籤
+    - export FQIN=${IMAGE_NAME}:${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}
 
 build:
   extends: .docker_job
@@ -52,5 +51,7 @@ publish:
   extends: .docker_job
   stage: publish
   environment: production
+  only:
+    - tags
   script:
     - docker run -e UV_PUBLISH_TOKEN "$FQIN"
