@@ -6,9 +6,8 @@
 
 - **Smart Concurrency**: Automatically detects CPU cores and selects the optimal number of parallel jobs to balance performance and system responsiveness.
 - **Turbo Mode**: Intelligent workflow analysis. Automatically boosts concurrency up to **16** for I/O-bound `copy` tasks while maintaining a stable **2** concurrent jobs for CPU-intensive encoding to avoid resource contention.
-- **Rich Visualization**: Beautiful, real-time progress bars for multiple concurrent tasks, powered by `rich`.
+- **Rich Visualization**: Beautiful, real-time progress bars for both individual jobs and the overall workflow, featuring smooth tracking based on video duration and live transcoding metrics (speed, FPS).
 - **Pre-flight Validation**: Integrated `ffprobe` checks to verify video availability, duration, and time ranges before starting heavy operations.
-- **Execution Statistics**: Detailed performance summary upon completion, including total jobs, total elapsed time, and average time per job.
 - **Dry-run Mode**: Preview generated `ffmpeg` commands in blue-tinted console output without making any changes.
 - **Type Safety**: Built with strict static analysis (Mypy) and modern Python standards for maximum reliability.
 
@@ -30,6 +29,13 @@ uv sync
 - `--dry-run`, `-n`: Print commands only.
 - `--concurrency`, `-c`: Manually override the smart concurrency logic.
 - `--version`, `-v`: Display current version.
+
+### Concurrency Policy
+
+`ffxpy` uses an intelligent resource allocation strategy:
+- **I/O Bound (Copying)**: Up to **16** concurrent jobs for maximum throughput.
+- **CPU Bound (Encoding)**: Limited to **2** concurrent jobs to ensure system stability and peak efficiency.
+- **Hybrid**: Automatically balanced based on the detected task types within your flow.
 
 ### 1. Split
 
