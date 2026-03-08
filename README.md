@@ -1,5 +1,10 @@
 # ffxpy
 
+![license](https://img.shields.io/badge/license-MIT-green)
+![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)
+[![PyPI Downloads](https://static.pepy.tech/personalized-badge/ffxpy?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/ffxpy)
+[![Buy Me A Coffee](https://img.buymeacoffee.com/button-api/?text=Fuel%20the%20Turbo%20Mode&emoji=🚀&slug=chesham&button_colour=FFDD00&font_colour=000000&font_family=Bree&outline_colour=000000&coffee_colour=ffffff)](https://www.buymeacoffee.com/chesham)
+
 **ffxpy** is a highly optimized Python command-line tool designed to simplify and streamline complex `ffmpeg` workflows. It provides a structured way to manage video processing tasks via YAML configuration, featuring smart resource management and real-time visualization.
 
 ## Key Features
