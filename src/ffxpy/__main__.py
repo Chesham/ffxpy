@@ -302,6 +302,48 @@ async def flow(
         f'Starting flow with [green]concurrency={flow_data.setting.concurrency}[/green]'
     )
 
+    # Phase 1: Pre-flight Validation (No side effects)
+    console.print('[bold cyan]Validating workflow...[/bold cyan]')
+    job_durations: list[timedelta | None] = []
+    for index, job in enumerate(flow_data.jobs):
+        job_name = job.name or f'Job #{index}'
+        job_duration = None
+        if job.command == Command.SPLIT:
+            if not job.setting.input_path:
+                raise ValueError(f'job {job_name} has no input path')
+            try:
+                info = await probe_video(
+                    job.setting.input_path, ffprobe_path=job.setting.ffprobe_path
+                )
+                # Range validation
+                if job.setting.start and job.setting.start > info.duration:
+                    raise ValueError(
+                        f'start time {job.setting.start} is out of range '
+                        f'({info.duration})'
+                    )
+                if job.setting.end and job.setting.end > info.duration:
+                    raise ValueError(
+                        f'end time {job.setting.end} is out of range ({info.duration})'
+                    )
+                if (
+                    job.setting.start
+                    and job.setting.end
+                    and job.setting.start >= job.setting.end
+                ):
+                    raise ValueError(
+                        f'start time {job.setting.start} must be less than '
+                        f'end time {job.setting.end}'
+                    )
+
+                actual_start = job.setting.start or timedelta(0)
+                actual_end = job.setting.end or info.duration
+                job_duration = actual_end - actual_start
+            except Exception as e:
+                console.print(f'[red]Validation failed for "{job_name}":[/red] {e}')
+                raise typer.Exit(code=1)
+        job_durations.append(job_duration)
+
+    # Phase 2: Execution (Start making changes)
     pending_tasks: list[asyncio.Task] = []
     semaphore = asyncio.Semaphore(flow_data.setting.concurrency)
 
@@ -314,45 +356,8 @@ async def flow(
         transient=True,
     )
 
-    async def run_job(job, job_args, job_name):
+    async def run_job(job_args, job_duration, job_name):
         async with semaphore:
-            # Get duration if it's a split job
-            # (inside semaphore to avoid overhead during launch)
-            job_duration = None
-            if job.command == Command.SPLIT:
-                try:
-                    info = await probe_video(
-                        job.setting.input_path, ffprobe_path=job.setting.ffprobe_path
-                    )
-                    # Range validation
-                    if job.setting.start and job.setting.start > info.duration:
-                        raise ValueError(
-                            f'start time {job.setting.start} is out of range '
-                            f'({info.duration})'
-                        )
-                    if job.setting.end and job.setting.end > info.duration:
-                        raise ValueError(
-                            f'end time {job.setting.end} is out of range '
-                            f'({info.duration})'
-                        )
-                    if (
-                        job.setting.start
-                        and job.setting.end
-                        and job.setting.start >= job.setting.end
-                    ):
-                        raise ValueError(
-                            f'start time {job.setting.start} must be less than '
-                            f'end time {job.setting.end}'
-                        )
-
-                    actual_start = job.setting.start or timedelta(0)
-                    actual_end = job.setting.end or info.duration
-                    job_duration = actual_end - actual_start
-                except Exception as e:
-                    console.print(f'[red]Error validating job "{job_name}":[/red] {e}')
-                    # We raise here to let the task fail and stop the flow
-                    raise
-
             return await run_ffmpeg(
                 job_args,
                 dry_run=setting.dry_run,
@@ -372,6 +377,7 @@ async def flow(
         with progress:
             for index, job in enumerate(flow_data.jobs):
                 job_name = job.name or f'Job #{index}'
+                job_duration = job_durations[index]
 
                 before_inputs = {}
                 if job.command == Command.MERGE:
@@ -417,7 +423,7 @@ async def flow(
                         progress=progress,
                     )
                 else:
-                    task = asyncio.create_task(run_job(job, args, job_name))
+                    task = asyncio.create_task(run_job(args, job_duration, job_name))
                     pending_tasks.append(task)
 
             if pending_tasks:
