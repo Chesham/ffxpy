@@ -266,7 +266,6 @@ async def flow(
         if j.setting.video_codec == 'copy' and j.setting.audio_codec == 'copy'
     ]
     is_all_copy = len(copy_jobs) == len(flow_data.jobs)
-    has_copy = len(copy_jobs) > 0
 
     from ffxpy.setting import get_default_concurrency
 
@@ -277,15 +276,13 @@ async def flow(
         cpu_count = os.cpu_count() or 1
 
         if is_all_copy:
-            # Pure copy mode: Still fairly aggressive but safer (up to 16)
+            # Pure copy mode: Max performance for I/O tasks
             turbo_concurrency = min(max(cpu_count // 4, current_default), 16)
             msg = 'All jobs are "copy", boosting to maximum I/O performance'
-        elif has_copy:
-            # Mixed mode: Conservative boost (up to 8)
-            turbo_concurrency = min(max(cpu_count // 8, current_default), 8)
-            msg = f'Mixed flow with {len(copy_jobs)} "copy" jobs, boosting performance'
         else:
-            turbo_concurrency = flow_data.setting.concurrency
+            # Any encoding job exists: Keep it safe
+            # (current_default is already 2 for high-end)
+            turbo_concurrency = min(current_default, 2)
             msg = None
 
         if turbo_concurrency > flow_data.setting.concurrency:
