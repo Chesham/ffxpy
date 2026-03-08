@@ -9,7 +9,13 @@ import isodate
 import typer
 import yaml
 from rich.console import Console
-from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
+from rich.progress import (
+    BarColumn,
+    Progress,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
 
 from ffxpy import __version__
 from ffxpy.const import Command
@@ -351,6 +357,7 @@ async def flow(
         TextColumn('[progress.description]{task.description}'),
         BarColumn(),
         '[progress.percentage]{task.percentage:>3.0f}%',
+        TimeElapsedColumn(),
         TimeRemainingColumn(),
         console=console,
         transient=False,
@@ -534,6 +541,7 @@ async def run_ffmpeg(
             TextColumn('[progress.description]{task.description}'),
             BarColumn(),
             '[progress.percentage]{task.percentage:>3.0f}%',
+            TimeElapsedColumn(),
             TimeRemainingColumn(),
             console=console,
             transient=False,
