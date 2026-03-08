@@ -21,16 +21,15 @@ def step_when_run_command(context, command):
 
     # Ensure ffx points to coverage run or directly to the package
     if command.startswith('ffx '):
-        # Use coverage to track the subprocess call
+        # Replace 'ffx ' with coverage command to track the subprocess call
         # -a: append to data file
         # --source=ffxpy: track ffxpy package
         # -m ffxpy: run the package
-        if command == 'ffx' and args:
-            full_command = f'uv run coverage run -a --source=ffxpy -m ffxpy {args}'
-        elif command == 'ffx':
-            full_command = 'uv run coverage run -a --source=ffxpy -m ffxpy'
-        else:
-            full_command = command
+        full_command = command.replace('ffx ', 'uv run coverage run -a --source=ffxpy -m ffxpy ', 1)
+    elif command == 'ffx':
+        full_command = 'uv run coverage run -a --source=ffxpy -m ffxpy'
+    else:
+        full_command = command
 
 
     # Run the command and capture output
