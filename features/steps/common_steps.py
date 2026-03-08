@@ -19,14 +19,27 @@ def step_when_run_command(context, command):
     # Dynamic replacement for test files
     command = command.replace('{video_5s}', str(context.video_5s))
 
-    # Ensure ffx points to 'uv run ffx' or directly to the package
-    if command.startswith('ffx'):
-        full_command = f'uv run {command}'
+    # Ensure ffx points to coverage run or directly to the package
+    if command.startswith('ffx '):
+        # Use coverage to track the subprocess call
+        # -a: append to data file
+        # --source=ffxpy: track ffxpy package
+        # -m ffxpy: run the package
+        args = command[4:]  # Remove 'ffx '
+        full_command = f'uv run coverage run -a --source=ffxpy -m ffxpy {args}'
+    elif command == 'ffx':
+        full_command = f'uv run coverage run -a --source=ffxpy -m ffxpy'
     else:
         full_command = command
 
     # Run the command and capture output
-    env = getattr(context, 'env', None)
+    env = os.environ.copy()
+    if getattr(context, 'env', None):
+        env.update(context.env)
+    
+    # Force coverage to write to the project root
+    env['COVERAGE_FILE'] = os.path.join(os.getcwd(), '.coverage')
+
     result = subprocess.run(
         full_command,
         shell=True,

@@ -57,6 +57,7 @@ warn_unused_configs = true
 
 dev = [
     "behave>=1.3.3",
+    "coverage>=7.13.4",
     "grappa>=1.0.1",
     "mypy>=1.19.1",
     "ruff>=0.15.5",

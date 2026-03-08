@@ -28,6 +28,9 @@ def create_dummy_video(path: Path, duration: int = 5):
 
 
 def before_all(context):
+    # Erase old coverage data
+    subprocess.run(['uv', 'run', 'coverage', 'erase'], capture_output=True)
+
     # Setup temporary directory for test files
     context.tmp_dir = Path(tempfile.mkdtemp(prefix='ffxpy_test_'))
     context.working_dir = context.tmp_dir / 'work'
@@ -42,3 +45,8 @@ def after_all(context):
     # Clean up temporary directory
     if hasattr(context, 'tmp_dir'):
         shutil.rmtree(context.tmp_dir)
+
+    # Combine and report coverage
+    print('\nGenerating Coverage Report...')
+    subprocess.run(['uv', 'run', 'coverage', 'combine'], capture_output=True)
+    subprocess.run(['uv', 'run', 'coverage', 'report', '-m'])
