@@ -579,6 +579,13 @@ async def run_ffmpeg(
             process.wait(),
         )
 
+    # Force completion to 100% regardless of ffmpeg output timing
+    if total_duration:
+        progress.update(task_id, completed=total_duration.total_seconds())
+    else:
+        # For tasks without known duration (like merge), mark as finished
+        progress.update(task_id, total=100, completed=100)
+
     if process.returncode != 0:
         console.print(f'[red]Error:[/red] ffmpeg exited with code {process.returncode}')
         raise typer.Exit(code=process.returncode or 1)
