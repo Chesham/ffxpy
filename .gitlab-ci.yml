@@ -4,11 +4,12 @@ stages:
   - publish
 
 variables:
-  UV_VERSION: "0.5"
   PYTHON_VERSION: "3.13"
 
 default:
-  image: ghcr.io/astral-sh/uv:python${PYTHON_VERSION}-bookworm-slim
+  image:
+    name: ghcr.io/astral-sh/uv:python${PYTHON_VERSION}-trixie-slim
+    entrypoint: [""]
 
 lint:
   stage: test
@@ -24,27 +25,25 @@ test:
     - uv sync
     - uv run behave
 
-before_script:
-  - export FQIN=$FQIP:$(git describe --always --tags)
-
-build:
-  environment: production
-  stage: build
+.docker_job:
   image: docker:24.0.5
   services:
     - docker:24.0.5-dind
   only:
     - tags
+  before_script:
+    - export FQIN=$FQIP:$(git describe --always --tags)
+
+build:
+  extends: .docker_job
+  stage: build
+  environment: production
   script:
     - docker build --target publish -t $FQIN .
 
 publish:
-  environment: production
+  extends: .docker_job
   stage: publish
-  image: docker:24.0.5
-  services:
-    - docker:24.0.5-dind
-  only:
-    - tags
+  environment: production
   script:
     - docker run -e UV_PUBLISH_TOKEN "$FQIN"
