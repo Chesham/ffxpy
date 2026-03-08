@@ -1,6 +1,6 @@
 [project]
 name = "ffxpy"
-version = "0.1.0"
+version = "0.2.0"
 description = "A project designed to simplify complex ffmpeg operations by providing a more user-friendly interface and workflow."
 readme = "README.md"
 authors = [
