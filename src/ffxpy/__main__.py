@@ -183,6 +183,8 @@ async def split(
         raise typer.Exit(code=1)
 
     output_path = setting.output_path
+    if not output_path:
+        raise ValueError('no output path specified')
 
     if output_path.is_dir():
         raise ValueError('output_path cannot be a directory')
@@ -220,6 +222,11 @@ async def merge(
     ctx = solve_context(ctx_)
     setting = merge_normalize(ctx.setting)
     setting.with_split = with_split
+
+    if not setting.input_path:
+        raise ValueError('no input path specified')
+    if not setting.output_path:
+        raise ValueError('no output path specified')
 
     args = compile_commandline(
         setting,
@@ -295,7 +302,7 @@ async def flow(
         f'Starting flow with [green]concurrency={flow_data.setting.concurrency}[/green]'
     )
 
-    pending_tasks = []
+    pending_tasks: list[asyncio.Task] = []
     semaphore = asyncio.Semaphore(flow_data.setting.concurrency)
 
     progress = Progress(
@@ -341,16 +348,23 @@ async def flow(
                     '-f': 'concat',
                     '-safe': '0',
                 }
-                job.setting.input_path.write_text(
-                    ''.join(
-                        f"file '{path.resolve()}'\n" for path in job.setting.merge_paths
+                if job.setting.input_path:
+                    job.setting.input_path.write_text(
+                        ''.join(
+                            f"file '{path.resolve()}'\n"
+                            for path in job.setting.merge_paths
+                        )
                     )
-                )
 
             if not job.setting.overwrite and job.setting.skip_existing:
                 if job.setting.output_path and job.setting.output_path.exists():
                     console.print(f'Skip existing file: "{job.setting.output_path}"')
                     continue
+
+            if not job.setting.input_path:
+                raise ValueError(f'job {job_name} has no input path')
+            if not job.setting.output_path:
+                raise ValueError(f'job {job_name} has no output path')
 
             args = compile_commandline(
                 job.setting,
@@ -389,7 +403,8 @@ async def flow(
     if not flow_data.setting.keep_temp:
         for job in flow_data.jobs:
             if job.command == Command.MERGE and not job.setting.keep_temp:
-                job.setting.input_path.unlink(missing_ok=True)
+                if job.setting.input_path:
+                    job.setting.input_path.unlink(missing_ok=True)
                 for path in job.setting.merge_paths:
                     path.unlink(missing_ok=True)
 
@@ -409,8 +424,8 @@ def compile_commandline(
     setting: Setting,
     input_path: Path,
     output_path: Path,
-    before_inputs: dict = None,
-    after_inputs: dict = None,
+    before_inputs: dict[str, str] | None = None,
+    after_inputs: dict[str, str] | None = None,
 ) -> list[str]:
     args = [setting.ffmpeg_path]
     if before_inputs:
@@ -423,7 +438,7 @@ def compile_commandline(
             args += ['-ss', str(setting.start)]
         if setting.end:
             args += ['-to', str(setting.end)]
-    args += ['-i', input_path_final]
+    args += ['-i', str(input_path_final)]
     if after_inputs:
         args += [str(item) for pair in after_inputs.items() for item in pair]
     if setting.start and '-ss' not in args:
@@ -449,12 +464,12 @@ def compile_commandline(
     output_path_final = output_path
     if setting.working_dir and not output_path.is_absolute():
         output_path_final = setting.working_dir / output_path.name
-    args.append(output_path_final)
+    args.append(str(output_path_final))
     return args
 
 
 async def run_ffmpeg(
-    args,
+    args: list[str],
     dry_run: bool = False,
     total_duration: timedelta | None = None,
     job_name: str | None = None,
@@ -488,7 +503,7 @@ async def run_ffmpeg(
         total=total_duration.total_seconds() if total_duration else None,
     )
 
-    async def stream_output(stream, is_stderr=False):
+    async def stream_output(stream: asyncio.StreamReader, is_stderr: bool = False):
         # ffmpeg outputs progress to stderr
         time_pattern = re.compile(r'time=(\d+):(\d+):(\d+)\.(\d+)')
         while True:
@@ -503,6 +518,9 @@ async def run_ffmpeg(
                     hours, minutes, seconds, _ = map(int, match.groups())
                     current_seconds = hours * 3600 + minutes * 60 + seconds
                     progress.update(task_id, completed=current_seconds)
+
+    if not process.stdout or not process.stderr:
+        raise RuntimeError('ffmpeg process failed to start streams')
 
     if internal_progress:
         with progress:
@@ -520,7 +538,7 @@ async def run_ffmpeg(
 
     if process.returncode != 0:
         console.print(f'[red]Error:[/red] ffmpeg exited with code {process.returncode}')
-        raise typer.Exit(code=process.returncode)
+        raise typer.Exit(code=process.returncode or 1)
 
     return process
 
