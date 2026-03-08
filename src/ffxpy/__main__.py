@@ -255,25 +255,38 @@ async def flow(
         yaml.safe_load(flow_path.open()), context={'setting': setting}
     )
 
-    # Smart Concurrency: If all jobs are 'copy' and concurrency is default, boost it
-    is_all_copy = all(
-        job.setting.video_codec == 'copy' and job.setting.audio_codec == 'copy'
-        for job in flow_data.jobs
-    )
-    # Check if user explicitly set concurrency via CLI or YAML
-    # We detect this by checking if it differs from the CPU-based default
+    # Smart Concurrency: Boost if we have many 'copy' jobs
+    copy_jobs = [
+        j
+        for j in flow_data.jobs
+        if j.setting.video_codec == 'copy' and j.setting.audio_codec == 'copy'
+    ]
+    is_all_copy = len(copy_jobs) == len(flow_data.jobs)
+    has_copy = len(copy_jobs) > 0
+
     from ffxpy.setting import get_default_concurrency
 
     current_default = get_default_concurrency()
-    if is_all_copy and flow_data.setting.concurrency <= current_default:
+
+    # Only auto-boost if user hasn't explicitly set a custom high concurrency
+    if flow_data.setting.concurrency <= current_default:
         cpu_count = os.cpu_count() or 1
-        # Set to half of cores, but at least current default and max 16 for safety
-        turbo_concurrency = min(max(cpu_count // 2, current_default), 16)
+        if is_all_copy:
+            # Pure copy mode: Very aggressive (up to 32)
+            turbo_concurrency = min(max(cpu_count // 2, current_default), 32)
+            msg = 'All jobs are "copy", boosting to maximum performance'
+        elif has_copy:
+            # Mixed mode: Moderately aggressive (up to 16)
+            turbo_concurrency = min(max(cpu_count // 4, current_default), 16)
+            msg = f'Mixed flow with {len(copy_jobs)} "copy" jobs, boosting performance'
+        else:
+            turbo_concurrency = flow_data.setting.concurrency
+            msg = None
+
         if turbo_concurrency > flow_data.setting.concurrency:
             flow_data.setting.concurrency = turbo_concurrency
             console.print(
-                f'[bold yellow]Turbo Mode:[/bold yellow] '
-                f'All jobs are "copy", boosting concurrency to {turbo_concurrency}'
+                f'[bold yellow]Turbo Mode:[/bold yellow] {msg} ({turbo_concurrency})'
             )
 
     console.print(

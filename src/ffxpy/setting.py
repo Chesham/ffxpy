@@ -9,10 +9,16 @@ import pydantic_settings
 
 def get_default_concurrency() -> int:
     try:
+        # os.cpu_count() typically returns logical cores (threads)
+        # For a 32-core physical machine, this is likely 64
         cores = os.cpu_count() or 1
+        if cores >= 64:
+            return 16
         if cores >= 32:
-            return 4
+            return 8
         if cores >= 16:
+            return 4
+        if cores >= 8:
             return 2
     except Exception:
         pass
