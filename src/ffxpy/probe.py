@@ -24,11 +24,13 @@ class VideoInfo(pydantic.BaseModel):
 def probe_video(path: Path, ffprobe_path: str = 'ffprobe') -> VideoInfo:
     cmd = [
         ffprobe_path,
-        '-v', 'quiet',
-        '-print_format', 'json',
+        '-v',
+        'quiet',
+        '-print_format',
+        'json',
         '-show_format',
         '-show_streams',
-        str(path)
+        str(path),
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, check=True)
     data = json.loads(result.stdout)
@@ -42,7 +44,7 @@ def probe_video(path: Path, ffprobe_path: str = 'ffprobe') -> VideoInfo:
             codec_type=s['codec_type'],
             codec_name=s['codec_name'],
             width=s.get('width'),
-            height=s.get('height')
+            height=s.get('height'),
         )
         for s in streams_data
     ]
@@ -51,5 +53,5 @@ def probe_video(path: Path, ffprobe_path: str = 'ffprobe') -> VideoInfo:
         format_name=format_data['format_name'],
         duration=timedelta(seconds=float(format_data['duration'])),
         size=int(format_data['size']),
-        streams=streams
+        streams=streams,
     )

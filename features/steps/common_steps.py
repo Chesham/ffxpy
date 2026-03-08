@@ -48,7 +48,6 @@ def step_when_run_command(context, command):
         print(f'STDERR: {context.stderr}')
 
 
-
 @then('檔案 "{file_path}" 應該存在')
 def step_then_file_should_exist(context, file_path):
     # Dynamic replacement for test files
@@ -68,7 +67,6 @@ def step_then_file_should_not_exist(context, file_path):
     file_path = file_path.replace('{video_5s}', str(context.video_5s))
     full_path = context.working_dir / file_path
     full_path.exists() | should.be.false
-
 
 
 @given('我建立檔案 "{file_name}"，內容如下')

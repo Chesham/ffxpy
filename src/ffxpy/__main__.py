@@ -170,7 +170,7 @@ async def split(
             raise ValueError(f'end time {end} is out of range ({info.duration})')
         if setting.start and setting.end and setting.start >= setting.end:
             raise ValueError(f'start time {start} must be less than end time {end}')
-        
+
         # Calculate split duration for progress bar
         actual_start = setting.start or timedelta(0)
         actual_end = setting.end or info.duration
@@ -197,10 +197,10 @@ async def split(
 
     args = compile_commandline(setting, input_path, output_path)
     await run_ffmpeg(
-        args, 
-        dry_run=setting.dry_run, 
+        args,
+        dry_run=setting.dry_run,
         total_duration=job_duration,
-        job_name=f'Splitting {input_path.name}'
+        job_name=f'Splitting {input_path.name}',
     )
 
 
@@ -235,11 +235,7 @@ async def merge(
 
     # For merge, we don't easily know the total duration without probing all parts
     # For now, let's just run it without a specific duration
-    await run_ffmpeg(
-        args, 
-        dry_run=setting.dry_run, 
-        job_name='Merging files'
-    )
+    await run_ffmpeg(args, dry_run=setting.dry_run, job_name='Merging files')
 
 
 @app.async_command(no_args_is_help=True)
