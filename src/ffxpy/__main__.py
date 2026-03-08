@@ -163,7 +163,7 @@ async def split(
 
     # Validate input video range
     try:
-        info = probe_video(input_path, ffprobe_path=setting.ffprobe_path)
+        info = await probe_video(input_path, ffprobe_path=setting.ffprobe_path)
         if setting.start and setting.start > info.duration:
             raise ValueError(f'start time {start} is out of range ({info.duration})')
         if setting.end and setting.end > info.duration:
@@ -254,6 +254,10 @@ async def flow(
         yaml.safe_load(flow_path.open()), context={'setting': setting}
     )
 
+    console.print(
+        f'Starting flow with [green]concurrency={flow_data.setting.concurrency}[/green]'
+    )
+
     pending_tasks = []
     semaphore = asyncio.Semaphore(flow_data.setting.concurrency)
 
@@ -266,8 +270,21 @@ async def flow(
         transient=True,
     )
 
-    async def run_job(job_args, job_duration, job_name):
+    async def run_job(job, job_args, job_name):
         async with semaphore:
+            # Get duration if it's a split job (inside semaphore to avoid overhead during launch)
+            job_duration = None
+            if job.command == Command.SPLIT:
+                try:
+                    info = await probe_video(
+                        job.setting.input_path, ffprobe_path=job.setting.ffprobe_path
+                    )
+                    actual_start = job.setting.start or timedelta(0)
+                    actual_end = job.setting.end or info.duration
+                    job_duration = actual_end - actual_start
+                except Exception:
+                    pass
+
             return await run_ffmpeg(
                 job_args,
                 dry_run=setting.dry_run,
@@ -304,19 +321,6 @@ async def flow(
                 before_inputs=before_inputs,
             )
 
-            # Get duration if it's a split job
-            job_duration = None
-            if job.command == Command.SPLIT:
-                try:
-                    info = probe_video(
-                        job.setting.input_path, ffprobe_path=job.setting.ffprobe_path
-                    )
-                    actual_start = job.setting.start or timedelta(0)
-                    actual_end = job.setting.end or info.duration
-                    job_duration = actual_end - actual_start
-                except Exception:
-                    pass
-
             if job.command == Command.MERGE:
                 if pending_tasks:
                     await asyncio.gather(*pending_tasks)
@@ -328,7 +332,7 @@ async def flow(
                     progress=progress,
                 )
             else:
-                task = asyncio.create_task(run_job(args, job_duration, job_name))
+                task = asyncio.create_task(run_job(job, args, job_name))
                 pending_tasks.append(task)
 
         if pending_tasks:

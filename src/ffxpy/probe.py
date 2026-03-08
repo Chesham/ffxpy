@@ -1,5 +1,5 @@
+import asyncio
 import json
-import subprocess
 from datetime import timedelta
 from pathlib import Path
 
@@ -21,7 +21,7 @@ class VideoInfo(pydantic.BaseModel):
     streams: list[StreamInfo]
 
 
-def probe_video(path: Path, ffprobe_path: str = 'ffprobe') -> VideoInfo:
+async def probe_video(path: Path, ffprobe_path: str = 'ffprobe') -> VideoInfo:
     cmd = [
         ffprobe_path,
         '-v',
@@ -32,8 +32,15 @@ def probe_video(path: Path, ffprobe_path: str = 'ffprobe') -> VideoInfo:
         '-show_streams',
         str(path),
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    data = json.loads(result.stdout)
+    process = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
+    stdout, stderr = await process.communicate()
+
+    if process.returncode != 0:
+        raise RuntimeError(f'ffprobe failed: {stderr.decode()}')
+
+    data = json.loads(stdout.decode())
 
     format_data = data['format']
     streams_data = data['streams']

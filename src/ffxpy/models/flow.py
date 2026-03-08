@@ -31,6 +31,19 @@ class Flow(pydantic.BaseModel):
     setting: Setting = pydantic.Field(default_factory=Setting)
     jobs: list[FlowJob] = pydantic.Field(default_factory=list)
 
+    @pydantic.model_validator(mode='before')
+    @classmethod
+    def before_validator(cls, data, info: pydantic.ValidationInfo):
+        if not isinstance(data, dict):
+            return data
+        context_setting = info.context.get('setting') if info.context else None
+        if context_setting and isinstance(context_setting, Setting):
+            # Merge context setting with data['setting'] if exists
+            yaml_setting_data = data.get('setting', {})
+            merged_setting = context_setting.model_dump(exclude_unset=True) | yaml_setting_data
+            data['setting'] = merged_setting
+        return data
+
     @pydantic.model_validator(mode='after')
     def validator(self):
         if self.setting:
