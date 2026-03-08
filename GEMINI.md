@@ -89,6 +89,7 @@ jobs:
 *   **Dependencies:** Project dependencies are listed in `pyproject.toml`.
 *   **Testing:** The project uses `behave` and `grappa` for Behavior-Driven Development (BDD). Feature files are located in the `features/` directory.
 *   **Progress Tracking:** Real-time progress is displayed using `rich`. The `flow` command features a smooth overall progress bar based on total job durations.
+*   **Quality Enforcement:** ALWAYS run `uv run ruff check .` and `uv run mypy .` after any code modification to ensure linting and type safety.
 
 ## Agent Communication Protocol
 
