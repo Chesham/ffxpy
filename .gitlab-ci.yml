@@ -31,12 +31,14 @@ test:
     - uv run behave
 
 extract-ffmpeg:
+  extends: .docker_job
   stage: .pre
-  image:
-    name: mwader/static-ffmpeg:7.1
-    entrypoint: [""]
   script:
-    - cp /ffmpeg /ffprobe .
+    # 建立一個臨時容器（不需要啟動），然後直接從中複製檔案
+    - docker create --name temp_ffmpeg mwader/static-ffmpeg:7.1
+    - docker cp temp_ffmpeg:/ffmpeg ./ffmpeg
+    - docker cp temp_ffmpeg:/ffprobe ./ffprobe
+    - docker rm temp_ffmpeg
   artifacts:
     paths:
       - ffmpeg
