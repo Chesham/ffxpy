@@ -58,6 +58,12 @@ def callback(
         '-n',
         help='Do not execute ffmpeg commands, only print them.',
     ),
+    concurrency: int = typer.Option(
+        1,
+        '--concurrency',
+        '-c',
+        help='Number of concurrent jobs.',
+    ),
     version: bool = typer.Option(
         None,
         '--version',
@@ -84,6 +90,8 @@ def callback(
         ctx.setting.overwrite = overwrite
     if dry_run:
         ctx.setting.dry_run = dry_run
+    if concurrency:
+        ctx.setting.concurrency = concurrency
     typer_ctx.meta['context'] = ctx
 
 
@@ -251,9 +259,20 @@ async def flow(
     )
 
     pending_tasks = []
+    semaphore = asyncio.Semaphore(flow_data.setting.concurrency)
+
+    async def run_job(job_args, job_duration, job_name):
+        async with semaphore:
+            return await run_ffmpeg(
+                job_args,
+                dry_run=setting.dry_run,
+                total_duration=job_duration,
+                job_name=job_name,
+            )
+
     for index, job in enumerate(flow_data.jobs):
         job_name = job.name or f'Job #{index}'
-        
+
         before_inputs = {}
         if job.command == Command.MERGE:
             before_inputs = {
@@ -282,7 +301,9 @@ async def flow(
         job_duration = None
         if job.command == Command.SPLIT:
             try:
-                info = probe_video(job.setting.input_path, ffprobe_path=job.setting.ffprobe_path)
+                info = probe_video(
+                    job.setting.input_path, ffprobe_path=job.setting.ffprobe_path
+                )
                 actual_start = job.setting.start or timedelta(0)
                 actual_end = job.setting.end or info.duration
                 job_duration = actual_end - actual_start
@@ -293,20 +314,9 @@ async def flow(
             if pending_tasks:
                 await asyncio.gather(*pending_tasks)
                 pending_tasks.clear()
-            await run_ffmpeg(
-                args, 
-                dry_run=setting.dry_run, 
-                job_name=job_name
-            )
+            await run_ffmpeg(args, dry_run=setting.dry_run, job_name=job_name)
         else:
-            task = asyncio.create_task(
-                run_ffmpeg(
-                    args, 
-                    dry_run=setting.dry_run, 
-                    total_duration=job_duration, 
-                    job_name=job_name
-                )
-            )
+            task = asyncio.create_task(run_job(args, job_duration, job_name))
             pending_tasks.append(task)
 
     if pending_tasks:

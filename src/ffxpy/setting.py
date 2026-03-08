@@ -33,6 +33,7 @@ class Setting(pydantic_settings.BaseSettings):
     start: timedelta | None = None
     end: timedelta | None = None
     dry_run: bool = False
+    concurrency: int = 1
     overwrite: bool = False
     skip_existing: bool = False
     with_suffix: bool = True
