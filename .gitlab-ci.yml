@@ -46,8 +46,8 @@ extract-ffmpeg:
     expire_in: 1 hour
 
 .docker_job:
-  # 使用包含 git 的 docker 映像檔，或在 before_script 安裝
-  image: docker:24.0.5
+  # 升級 Docker 版本以支援較新的 API (1.44+)
+  image: docker:27.5
   variables:
     DOCKER_BUILDKIT: "0"
     # 使用專案路徑 slug，保證在同一個 Runner 上唯一且不依賴 Registry 服務
