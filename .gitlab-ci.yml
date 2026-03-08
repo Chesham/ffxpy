@@ -30,12 +30,16 @@ test:
 .docker_job:
   # 使用包含 git 的 docker 映像檔，或在 before_script 安裝
   image: docker:24.0.5
+  variables:
+    DOCKER_BUILDKIT: "0"
+    # 使用專案路徑 slug，保證在同一個 Runner 上唯一且不依賴 Registry 服務
+    IMAGE_NAME: ${CI_PROJECT_PATH_SLUG}
   only:
     - tags
   before_script:
     # 確保環境中有 git 以便取得版本號
     - apk add --no-cache git
-    - export FQIN=$FQIP:$(git describe --always --tags)
+    - export FQIN=${IMAGE_NAME}:${CI_COMMIT_TAG}
 
 build:
   extends: .docker_job
