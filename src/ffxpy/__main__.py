@@ -1,10 +1,13 @@
 import asyncio
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import isodate
 import typer
 import yaml
+from rich.console import Console
+from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
 
 from ffxpy import __version__
 from ffxpy.const import Command
@@ -15,6 +18,7 @@ from ffxpy.setting import Setting
 from ffxpy.vendor import async_typer
 
 app = async_typer.AsyncTyper(no_args_is_help=True)
+console = Console()
 
 
 def version_callback(value: bool):
@@ -126,13 +130,11 @@ async def split(
     ),
     video_codec: str = typer.Option(
         None,
-        help='Video codec to use.',
-        metavar='CODEC',
+        help='Video codec.',
     ),
     audio_codec: str = typer.Option(
         None,
-        help='Audio codec to use.',
-        metavar='CODEC',
+        help='Audio codec.',
     ),
     with_suffix: bool = typer.Option(
         True,
@@ -142,7 +144,6 @@ async def split(
     ),
 ):
     ctx = solve_context(ctx_)
-    ctx.setting.input_path = input_path
     setting = split_normalize(ctx.setting)
     setting.start = start
     setting.end = end
@@ -161,8 +162,13 @@ async def split(
             raise ValueError(f'end time {end} is out of range ({info.duration})')
         if setting.start and setting.end and setting.start >= setting.end:
             raise ValueError(f'start time {start} must be less than end time {end}')
+        
+        # Calculate split duration for progress bar
+        actual_start = setting.start or timedelta(0)
+        actual_end = setting.end or info.duration
+        job_duration = actual_end - actual_start
     except Exception as e:
-        print(f'Error validating input: {e}')
+        console.print(f'[red]Error validating input:[/red] {e}')
         raise typer.Exit(code=1)
 
     output_path = setting.output_path
@@ -173,7 +179,7 @@ async def split(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if output_path.exists():
         if setting.skip_existing:
-            print(f'skip existing file: "{output_path}"')
+            console.print(f'skip existing file: "{output_path}"')
             return
         if not setting.overwrite:
             raise FileExistsError(
@@ -182,7 +188,12 @@ async def split(
             )
 
     args = compile_commandline(setting, input_path, output_path)
-    await run_ffmpeg(args, dry_run=setting.dry_run)
+    await run_ffmpeg(
+        args, 
+        dry_run=setting.dry_run, 
+        total_duration=job_duration,
+        job_name=f'Splitting {input_path.name}'
+    )
 
 
 @app.async_command(no_args_is_help=True)
@@ -214,7 +225,13 @@ async def merge(
             ''.join(f"file '{path.resolve()}'\n" for path in setting.merge_paths)
         )
 
-    await run_ffmpeg(args, dry_run=setting.dry_run)
+    # For merge, we don't easily know the total duration without probing all parts
+    # For now, let's just run it without a specific duration
+    await run_ffmpeg(
+        args, 
+        dry_run=setting.dry_run, 
+        job_name='Merging files'
+    )
 
 
 @app.async_command(no_args_is_help=True)
@@ -229,17 +246,15 @@ async def flow(
     ctx = solve_context(ctx_)
     setting = ctx.setting
 
-    flow = Flow.model_validate(
+    flow_data = Flow.model_validate(
         yaml.safe_load(flow_path.open()), context={'setting': setting}
     )
 
     pending_tasks = []
-    for index, job in enumerate(flow.jobs):
-        job_name = job.name or '[Unnamed Job]'
-        print(f'Job #{index} {job_name}')
-
+    for index, job in enumerate(flow_data.jobs):
+        job_name = job.name or f'Job #{index}'
+        
         before_inputs = {}
-
         if job.command == Command.MERGE:
             before_inputs = {
                 '-f': 'concat',
@@ -253,7 +268,7 @@ async def flow(
 
         if not job.setting.overwrite and job.setting.skip_existing:
             if job.setting.output_path and job.setting.output_path.exists():
-                print(f'Skip existing file: "{job.setting.output_path}"')
+                console.print(f'Skip existing file: "{job.setting.output_path}"')
                 continue
 
         args = compile_commandline(
@@ -263,20 +278,42 @@ async def flow(
             before_inputs=before_inputs,
         )
 
+        # Get duration if it's a split job
+        job_duration = None
+        if job.command == Command.SPLIT:
+            try:
+                info = probe_video(job.setting.input_path, ffprobe_path=job.setting.ffprobe_path)
+                actual_start = job.setting.start or timedelta(0)
+                actual_end = job.setting.end or info.duration
+                job_duration = actual_end - actual_start
+            except Exception:
+                pass
+
         if job.command == Command.MERGE:
             if pending_tasks:
                 await asyncio.gather(*pending_tasks)
                 pending_tasks.clear()
-            await run_ffmpeg(args, dry_run=setting.dry_run)
+            await run_ffmpeg(
+                args, 
+                dry_run=setting.dry_run, 
+                job_name=job_name
+            )
         else:
-            task = asyncio.create_task(run_ffmpeg(args, dry_run=setting.dry_run))
+            task = asyncio.create_task(
+                run_ffmpeg(
+                    args, 
+                    dry_run=setting.dry_run, 
+                    total_duration=job_duration, 
+                    job_name=job_name
+                )
+            )
             pending_tasks.append(task)
 
     if pending_tasks:
         await asyncio.gather(*pending_tasks)
 
-    if not flow.setting.keep_temp:
-        for job in flow.jobs:
+    if not flow_data.setting.keep_temp:
+        for job in flow_data.jobs:
             if job.command == Command.MERGE and not job.setting.keep_temp:
                 job.setting.input_path.unlink(missing_ok=True)
                 for path in job.setting.merge_paths:
@@ -291,7 +328,7 @@ async def flow(
 async def exec(ctx_: typer.Context):
     ctx = solve_context(ctx_)
     args = [ctx.setting.ffmpeg_path, *ctx_.args]
-    await run_ffmpeg(args, dry_run=setting.dry_run)
+    await run_ffmpeg(args, dry_run=ctx.setting.dry_run, job_name='Direct execution')
 
 
 def compile_commandline(
@@ -342,18 +379,15 @@ def compile_commandline(
     return args
 
 
-def timedelta_to_padded_str(td: timedelta):
-    total_seconds = int(td.total_seconds())
-    hours = total_seconds // 3600
-    minutes = (total_seconds % 3600) // 60
-    seconds = total_seconds % 60
-    return f'PT{hours:02}H{minutes:02}M{seconds:02}S'
-
-
-async def run_ffmpeg(args, dry_run: bool = False):
+async def run_ffmpeg(
+    args,
+    dry_run: bool = False,
+    total_duration: timedelta | None = None,
+    job_name: str | None = None,
+):
     cmd_str = ' '.join(str(arg) for arg in args)
     if dry_run:
-        print(f'Dry-run: {cmd_str}')
+        console.print(f'[blue]Dry-run:[/blue] {cmd_str}')
         return
 
     process = await asyncio.create_subprocess_exec(
@@ -362,21 +396,46 @@ async def run_ffmpeg(args, dry_run: bool = False):
         stderr=asyncio.subprocess.PIPE,
     )
 
-    async def stream_output(stream):
-        while True:
-            chunk = await stream.read(1)
-            if not chunk:
-                break
-            print(chunk.decode('utf-8', errors='replace'), end='', flush=True)
+    progress = Progress(
+        TextColumn('[progress.description]{task.description}'),
+        BarColumn(),
+        '[progress.percentage]{task.percentage:>3.0f}%',
+        TimeRemainingColumn(),
+        console=console,
+        transient=True,
+    )
 
-    tasks = [
-        asyncio.create_task(stream_output(process.stdout)),
-        asyncio.create_task(stream_output(process.stderr)),
-    ]
-    await asyncio.gather(*tasks)
-    await process.wait()
+    task_id = progress.add_task(
+        description=job_name or 'Processing...',
+        total=total_duration.total_seconds() if total_duration else None,
+    )
+
+    async def stream_output(stream, is_stderr=False):
+        # ffmpeg outputs progress to stderr
+        time_pattern = re.compile(r'time=(\d+):(\d+):(\d+)\.(\d+)')
+        while True:
+            line = await stream.readline()
+            if not line:
+                break
+
+            line_str = line.decode('utf-8', errors='replace').strip()
+            if is_stderr and total_duration:
+                match = time_pattern.search(line_str)
+                if match:
+                    hours, minutes, seconds, _ = map(int, match.groups())
+                    current_seconds = hours * 3600 + minutes * 60 + seconds
+                    progress.update(task_id, completed=current_seconds)
+
+    with progress:
+        await asyncio.gather(
+            stream_output(process.stdout),
+            stream_output(process.stderr, is_stderr=True),
+            process.wait(),
+        )
+
     if process.returncode != 0:
-        raise RuntimeError(f'ffmpeg exited with code {process.returncode}')
+        console.print(f'[red]Error:[/red] ffmpeg exited with code {process.returncode}')
+        raise typer.Exit(code=process.returncode)
 
     return process
 
