@@ -1,6 +1,28 @@
 stages:
+  - test
   - build
   - publish
+
+variables:
+  UV_VERSION: "0.5"
+  PYTHON_VERSION: "3.13"
+
+default:
+  image: ghcr.io/astral-sh/uv:python${PYTHON_VERSION}-bookworm-slim
+
+lint:
+  stage: test
+  script:
+    - uv sync
+    - uv run ruff check .
+
+test:
+  stage: test
+  before_script:
+    - apt-get update && apt-get install -y ffmpeg
+  script:
+    - uv sync
+    - uv run behave
 
 before_script:
   - export FQIN=$FQIP:$(git describe --always --tags)
@@ -8,6 +30,9 @@ before_script:
 build:
   environment: production
   stage: build
+  image: docker:24.0.5
+  services:
+    - docker:24.0.5-dind
   only:
     - tags
   script:
@@ -16,6 +41,9 @@ build:
 publish:
   environment: production
   stage: publish
+  image: docker:24.0.5
+  services:
+    - docker:24.0.5-dind
   only:
     - tags
   script:
