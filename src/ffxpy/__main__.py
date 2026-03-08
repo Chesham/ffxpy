@@ -1,6 +1,7 @@
 import asyncio
 import os
 import re
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -60,7 +61,7 @@ def callback(
         help='Do not execute ffmpeg commands, only print them.',
     ),
     concurrency: int = typer.Option(
-        1,
+        None,
         '--concurrency',
         '-c',
         help='Number of concurrent jobs.',
@@ -255,6 +256,8 @@ async def flow(
         yaml.safe_load(flow_path.open()), context={'setting': setting}
     )
 
+    start_time = time.perf_counter()
+
     # Smart Concurrency: Boost if we have many 'copy' jobs
     copy_jobs = [
         j
@@ -373,6 +376,16 @@ async def flow(
 
         if pending_tasks:
             await asyncio.gather(*pending_tasks)
+
+    end_time = time.perf_counter()
+    total_duration = end_time - start_time
+    job_count = len(flow_data.jobs)
+    avg_duration = total_duration / job_count if job_count > 0 else 0
+
+    console.print('\n[bold green]Flow Completed![/bold green]')
+    console.print(f'  Total Jobs: {job_count}')
+    console.print(f'  Total Time: [cyan]{total_duration:.2f}s[/cyan]')
+    console.print(f'  Avg / Job : [cyan]{avg_duration:.2f}s[/cyan]')
 
     if not flow_data.setting.keep_temp:
         for job in flow_data.jobs:
