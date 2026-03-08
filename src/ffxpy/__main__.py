@@ -489,16 +489,19 @@ def compile_commandline(
                 continue
             args += [str(k), str(v)]
 
-    # Intelligent seeking: Fast seek for 'copy', Accurate seek for re-encoding
-    # Benefit of Fast Seek: Fast, doesn't need to decode the whole stream.
-    # Cost of Fast Seek: Not frame-accurate (snaps to nearest keyframe).
+    # Hybrid Seeking: Fast seek jump followed by Accurate seek for re-encoding.
+    # Copy mode uses simple Fast Seek.
     is_copy = setting.video_codec == 'copy'
+    seek_buffer = timedelta(seconds=30)
 
-    if is_copy:
-        if setting.start:
+    # 1. Pre-input seeking (Fast Seek)
+    if setting.start:
+        if is_copy:
+            # Copy mode: simple fast seek before -i
             args += ['-ss', str(setting.start)]
-        if setting.end:
-            args += ['-to', str(setting.end)]
+        elif setting.start > seek_buffer:
+            # Re-encoding: hybrid seek (step 1: fast jump to 30s before target)
+            args += ['-ss', str(setting.start - seek_buffer)]
 
     input_path_final = input_path
     if setting.working_dir and not input_path.is_absolute():
@@ -506,11 +509,21 @@ def compile_commandline(
 
     args += ['-i', str(input_path_final)]
 
-    if not is_copy:
-        if setting.start:
+    # 2. Post-input seeking (Accurate Seek)
+    if not is_copy and setting.start:
+        if setting.start > seek_buffer:
+            # Re-encoding: hybrid seek (step 2: accurate finish)
+            args += ['-ss', str(seek_buffer)]
+        else:
+            # Re-encoding: simple accurate seek for short offsets
             args += ['-ss', str(setting.start)]
-        if setting.end:
-            args += ['-to', str(setting.end)]
+
+    # 3. Duration handling (always use -t after -i for robustness)
+    if setting.end:
+        start_time = setting.start or timedelta(0)
+        duration = setting.end - start_time
+        if duration.total_seconds() > 0:
+            args += ['-t', str(duration)]
 
     if after_inputs:
         args += [str(item) for pair in after_inputs.items() for item in pair]
