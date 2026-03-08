@@ -6,6 +6,7 @@ from ffxpy.setting import Setting
 class Context:
     def __init__(self, setting: Setting | None = None):
         self.setting = setting or Setting()
+        self.concurrency_specified: bool = False
 
 
 def solve_context(src):

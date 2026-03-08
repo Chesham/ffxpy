@@ -92,8 +92,9 @@ def callback(
         ctx.setting.overwrite = overwrite
     if dry_run:
         ctx.setting.dry_run = dry_run
-    if concurrency:
+    if concurrency is not None:
         ctx.setting.concurrency = concurrency
+        ctx.concurrency_specified = True
     typer_ctx.meta['context'] = ctx
 
 
@@ -271,9 +272,10 @@ async def flow(
 
     current_default = get_default_concurrency()
 
-    # Only auto-boost if user hasn't explicitly set a custom high concurrency
-    if flow_data.setting.concurrency <= current_default:
+    # Only auto-boost if user hasn't explicitly set a custom concurrency via CLI
+    if not ctx.concurrency_specified:
         cpu_count = os.cpu_count() or 1
+
         if is_all_copy:
             # Pure copy mode: Very aggressive (up to 32)
             turbo_concurrency = min(max(cpu_count // 2, current_default), 32)
