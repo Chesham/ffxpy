@@ -25,12 +25,13 @@ def step_when_run_command(context, command):
         # -a: append to data file
         # --source=ffxpy: track ffxpy package
         # -m ffxpy: run the package
-        args = command[4:]  # Remove 'ffx '
-        full_command = f'uv run coverage run -a --source=ffxpy -m ffxpy {args}'
-    elif command == 'ffx':
-        full_command = f'uv run coverage run -a --source=ffxpy -m ffxpy'
-    else:
-        full_command = command
+        if command == 'ffx' and args:
+            full_command = f'uv run coverage run -a --source=ffxpy -m ffxpy {args}'
+        elif command == 'ffx':
+            full_command = 'uv run coverage run -a --source=ffxpy -m ffxpy'
+        else:
+            full_command = command
+
 
     # Run the command and capture output
     env = os.environ.copy()
