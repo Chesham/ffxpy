@@ -353,7 +353,7 @@ async def flow(
         '[progress.percentage]{task.percentage:>3.0f}%',
         TimeRemainingColumn(),
         console=console,
-        transient=True,
+        transient=False,
     )
 
     async def run_job(job_args, job_duration, job_name):
@@ -536,8 +536,9 @@ async def run_ffmpeg(
             '[progress.percentage]{task.percentage:>3.0f}%',
             TimeRemainingColumn(),
             console=console,
-            transient=True,
+            transient=False,
         )
+
         internal_progress = True
 
     task_id = progress.add_task(
