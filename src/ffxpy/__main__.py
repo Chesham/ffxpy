@@ -1,4 +1,5 @@
 import asyncio
+import os
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -253,6 +254,27 @@ async def flow(
     flow_data = Flow.model_validate(
         yaml.safe_load(flow_path.open()), context={'setting': setting}
     )
+
+    # Smart Concurrency: If all jobs are 'copy' and concurrency is default, boost it
+    is_all_copy = all(
+        job.setting.video_codec == 'copy' and job.setting.audio_codec == 'copy'
+        for job in flow_data.jobs
+    )
+    # Check if user explicitly set concurrency via CLI or YAML
+    # We detect this by checking if it differs from the CPU-based default
+    from ffxpy.setting import get_default_concurrency
+
+    current_default = get_default_concurrency()
+    if is_all_copy and flow_data.setting.concurrency <= current_default:
+        cpu_count = os.cpu_count() or 1
+        # Set to half of cores, but at least current default and max 16 for safety
+        turbo_concurrency = min(max(cpu_count // 2, current_default), 16)
+        if turbo_concurrency > flow_data.setting.concurrency:
+            flow_data.setting.concurrency = turbo_concurrency
+            console.print(
+                f'[bold yellow]Turbo Mode:[/bold yellow] '
+                f'All jobs are "copy", boosting concurrency to {turbo_concurrency}'
+            )
 
     console.print(
         f'Starting flow with [green]concurrency={flow_data.setting.concurrency}[/green]'
