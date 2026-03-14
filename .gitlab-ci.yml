@@ -50,6 +50,9 @@ test-multi-version:
     # 這樣測試環境內就會有 Dockerfile 定義好的 ffmpeg
     - docker build --target test --build-arg PYTHON_VERSION=$PY_VER -t ffxpy-test-$PY_VER .
     - docker run --rm -e USE_COVERAGE=false ffxpy-test-$PY_VER
+  after_script:
+    # 測試結束後立即移除映像檔以釋放磁碟空間
+    - docker rmi ffxpy-test-$PY_VER || true
 
 build:
   extends:
@@ -58,6 +61,12 @@ build:
   stage: build
   script:
     - docker build --target publish -t $FQIN .
+  after_script:
+    # 如果不是 main 分支也不是 Tag (單純的 Feature Branch MR)，建構完就刪除以節省空間
+    - |
+      if [ "$CI_COMMIT_BRANCH" != "$CI_DEFAULT_BRANCH" ] && [ -z "$CI_COMMIT_TAG" ]; then
+        docker rmi $FQIN || true
+      fi
 
 # 發佈到 TestPyPI (僅限 main 分支)
 publish-test:
@@ -70,6 +79,9 @@ publish-test:
     # 假設您的 Dockerfile 支援透過環境變數切換發佈目標
     # 或者您可以在這裡直接執行 uv publish --publish-url https://test.pypi.org/legacy/
     - docker run -e UV_PUBLISH_TOKEN="$UV_PUBLISH_TEST_TOKEN" -e UV_PUBLISH_URL="$UV_PUBLISH_URL" "$FQIN"
+  after_script:
+    # 發佈完成後刪除本地映像檔
+    - docker rmi $FQIN || true
 
 # 發佈到正式 PyPI (僅限 Tags)
 publish:
@@ -80,6 +92,9 @@ publish:
   environment: production
   script:
     - docker run -e UV_PUBLISH_TOKEN "$FQIN"
+  after_script:
+    # 發佈完成後刪除本地映像檔
+    - docker rmi $FQIN || true
 
 .docker_job:
   # 升級 Docker 版本以支援較新的 API (1.44+)
