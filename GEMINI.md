@@ -16,6 +16,8 @@ The core functionalities include:
 
 - **Smart Merge Optimization**: Implemented an optimization that uses `shutil.move` instead of `ffmpeg` when a merge task involves only a single source file in `copy` mode with no scaling.
 - **Merge Command Enhancements**: Added encoding options (`video_codec`, `audio_codec`, `video_bitrate`, `audio_bitrate`, `scale`) to the `merge` command to support transcoding during merges.
+- **Multi-version Support**: Introduced `tox` configuration using `tox-uv` to support Python 3.9 through 3.13. Relaxed `pydantic-settings` and `coverage` version constraints in `pyproject.toml` for Python 3.9 compatibility.
+- **Test Infrastructure**: Added `USE_COVERAGE` toggle in BDD steps to allow running tests without coverage overhead or conflicts during multi-version testing.
 - **Robust Path Resolution**: Fixed path resolution issues in `Smart Merge` logic when using `working_dir` with relative paths.
 - **BDD Testing**: Added `features/smart_merge.feature` covering single-file copy, single-file transcoding, and workflow integration scenarios.
 
