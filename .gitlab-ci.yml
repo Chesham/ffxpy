@@ -51,7 +51,7 @@ test-multi-version:
     - docker build --target test --build-arg PYTHON_VERSION=$PY_VER -t ffxpy-test-$PY_VER .
     - docker run --rm -e USE_COVERAGE=false ffxpy-test-$PY_VER
   after_script:
-    # 測試結束後立即移除映像檔以釋放磁碟空間
+    - export FQIN=${CI_PROJECT_PATH_SLUG}:${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}
     - docker rmi ffxpy-test-$PY_VER || true
 
 build:
@@ -62,6 +62,7 @@ build:
   script:
     - docker build --target publish -t $FQIN .
   after_script:
+    - export FQIN=${CI_PROJECT_PATH_SLUG}:${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}
     # 如果不是 main 分支也不是 Tag (單純的 Feature Branch MR)，建構完就刪除以節省空間
     - |
       if [ "$CI_COMMIT_BRANCH" != "$CI_DEFAULT_BRANCH" ] && [ -z "$CI_COMMIT_TAG" ]; then
@@ -78,9 +79,9 @@ publish-test:
   script:
     # 假設您的 Dockerfile 支援透過環境變數切換發佈目標
     # 或者您可以在這裡直接執行 uv publish --publish-url https://test.pypi.org/legacy/
-    - docker run -e UV_PUBLISH_TOKEN="$UV_PUBLISH_TEST_TOKEN" -e UV_PUBLISH_URL="$UV_PUBLISH_URL" "$FQIN"
+    - docker run -e UV_PUBLISH_TOKEN="$UV_PUBLISH_TOKEN" -e UV_PUBLISH_URL="$UV_PUBLISH_URL" "$FQIN"
   after_script:
-    # 發佈完成後刪除本地映像檔
+    - export FQIN=${CI_PROJECT_PATH_SLUG}:${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}
     - docker rmi $FQIN || true
 
 # 發佈到正式 PyPI (僅限 Tags)
@@ -93,7 +94,7 @@ publish:
   script:
     - docker run -e UV_PUBLISH_TOKEN "$FQIN"
   after_script:
-    # 發佈完成後刪除本地映像檔
+    - export FQIN=${CI_PROJECT_PATH_SLUG}:${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}
     - docker rmi $FQIN || true
 
 .docker_job:
@@ -105,5 +106,5 @@ publish:
   before_script:
     # 確保環境中有 git 以便取得版本號
     - apk add --no-cache git
-    # 優先使用 Tag，否則使用 commit SHA 作為映像檔標籤
+    # 在每個 shell session 中都重新計算 FQIN 以確保可用性
     - export FQIN=${IMAGE_NAME}:${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}
