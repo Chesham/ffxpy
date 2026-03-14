@@ -7,52 +7,100 @@ variables:
   PYTHON_VERSION: "3.13"
   # 指向 Runner 掛載的 WSL 快取目錄
   UV_CACHE_DIR: "/cache/uv"
+  DOCKER_BUILDKIT: "1"
 
 default:
   image:
     name: ghcr.io/astral-sh/uv:python${PYTHON_VERSION}-trixie-slim
     entrypoint: [""]
 
+# TBD Flow 規則定義
+.rules-mr-and-trunk:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+.rules-trunk-only:
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+.rules-release:
+  rules:
+    - if: $CI_COMMIT_TAG
+
 lint:
+  extends: .rules-mr-and-trunk
   stage: test
   script:
     - uv sync --frozen --cache-dir $UV_CACHE_DIR
     - uv run ruff check .
 
-test:
-  extends: .docker_job
+test-multi-version:
+  extends: .rules-mr-and-trunk
+  stage: test
+  parallel:
+    matrix:
+      - TOXENV: [py39, py310, py311, py312, py313, ruff, mypy]
+  script:
+    - uv sync --frozen --cache-dir $UV_CACHE_DIR
+    # 根據 TOXENV 動態提取版本號（例如從 py39 提取 3.9）
+    # 對於 ruff/mypy 則使用預設的 PYTHON_VERSION
+    - |
+      if [[ $TOXENV =~ ^py([0-9])([0-9]+)$ ]]; then
+        PYTHON_TO_INSTALL="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+        uv python install $PYTHON_TO_INSTALL
+      fi
+    # 執行特定的 tox 環境
+    - uv run tox -e $TOXENV
+
+test-integration:
+  extends: 
+    - .docker_job
+    - .rules-mr-and-trunk
   stage: test
   script:
     # 建立測試映像檔，並在裡面執行 BDD 測試
-    # 如果 Dockerfile 中 ffmpeg 那一層沒變，第二次跑就會極快
     - docker build --target test -t ffxpy-test .
     - docker run --rm ffxpy-test
+
+build:
+  extends:
+    - .docker_job
+    - .rules-mr-and-trunk
+  stage: build
+  script:
+    - docker build --target publish -t $FQIN .
+
+# 發佈到 TestPyPI (僅限 main 分支)
+publish-test:
+  extends:
+    - .docker_job
+    - .rules-trunk-only
+  stage: publish
+  environment: develop
+  script:
+    # 假設您的 Dockerfile 支援透過環境變數切換發佈目標
+    # 或者您可以在這裡直接執行 uv publish --publish-url https://test.pypi.org/legacy/
+    - docker run -e UV_PUBLISH_TOKEN="$UV_PUBLISH_TEST_TOKEN" -e UV_PUBLISH_URL="$UV_PUBLISH_URL" "$FQIN"
+
+# 發佈到正式 PyPI (僅限 Tags)
+publish:
+  extends:
+    - .docker_job
+    - .rules-release
+  stage: publish
+  environment: production
+  script:
+    - docker run -e UV_PUBLISH_TOKEN "$FQIN"
 
 .docker_job:
   # 升級 Docker 版本以支援較新的 API (1.44+)
   image: docker:27.5
   variables:
-    DOCKER_BUILDKIT: "0"
-    # 使用專案路徑 slug，保證在同一個 Runner 上唯一且不依賴 Registry 服務
+    # 使用專案路徑 slug，保證在同一個 Runner 上唯一
     IMAGE_NAME: ${CI_PROJECT_PATH_SLUG}
   before_script:
     # 確保環境中有 git 以便取得版本號
     - apk add --no-cache git
     # 優先使用 Tag，否則使用 commit SHA 作為映像檔標籤
     - export FQIN=${IMAGE_NAME}:${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}
-
-build:
-  extends: .docker_job
-  stage: build
-  environment: production
-  script:
-    - docker build --target publish -t $FQIN .
-
-publish:
-  extends: .docker_job
-  stage: publish
-  environment: production
-  only:
-    - tags
-  script:
-    - docker run -e UV_PUBLISH_TOKEN "$FQIN"
