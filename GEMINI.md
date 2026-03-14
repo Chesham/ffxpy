@@ -9,8 +9,15 @@
 
 The core functionalities include:
 - **Splitting:** Splitting video files based on time ranges.
-- **Merging:** Merging multiple video files into one.
+- **Merging:** Merging multiple video files into one. Includes **Smart Merge** optimization for single-file copy.
 - **Flows:** Executing a predefined sequence of operations from a YAML file.
+
+## Recent Changes
+
+- **Smart Merge Optimization**: Implemented an optimization that uses `shutil.move` instead of `ffmpeg` when a merge task involves only a single source file in `copy` mode with no scaling.
+- **Merge Command Enhancements**: Added encoding options (`video_codec`, `audio_codec`, `video_bitrate`, `audio_bitrate`, `scale`) to the `merge` command to support transcoding during merges.
+- **Robust Path Resolution**: Fixed path resolution issues in `Smart Merge` logic when using `working_dir` with relative paths.
+- **BDD Testing**: Added `features/smart_merge.feature` covering single-file copy, single-file transcoding, and workflow integration scenarios.
 
 ## Building and Running
 

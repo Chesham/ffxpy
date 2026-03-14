@@ -225,15 +225,43 @@ async def merge(
         '-s',
         help='Merge with splited files.',
     ),
+    video_codec: str = typer.Option(
+        None,
+        help='Video codec.',
+    ),
+    audio_codec: str = typer.Option(
+        None,
+        help='Audio codec.',
+    ),
+    video_bitrate: str = typer.Option(
+        None,
+        help='Video bitrate.',
+    ),
+    audio_bitrate: str = typer.Option(
+        None,
+        help='Audio bitrate.',
+    ),
+    scale: str = typer.Option(
+        None,
+        help='Scale video.',
+    ),
 ):
     ctx = solve_context(ctx_)
     setting = merge_normalize(ctx.setting)
     setting.with_split = with_split
+    if video_codec:
+        setting.video_codec = video_codec
+    if audio_codec:
+        setting.audio_codec = audio_codec
+    if video_bitrate:
+        setting.video_bitrate = video_bitrate
+    if audio_bitrate:
+        setting.audio_bitrate = audio_bitrate
+    if scale:
+        setting.scale = scale
 
-    if not setting.input_path:
-        raise ValueError('no input path specified')
-    if not setting.output_path:
-        raise ValueError('no output path specified')
+    if not setting.merge_paths:
+        raise ValueError('no merge paths found')
 
     args = compile_commandline(
         setting,
@@ -249,6 +277,59 @@ async def merge(
         setting.input_path.write_text(
             ''.join(f"file '{path.resolve()}'\n" for path in setting.merge_paths)
         )
+
+    # Smart Merge: Optimization for single file copy
+    if len(setting.merge_paths) == 1:
+        source_file = setting.merge_paths[0]
+        source_file_final = source_file
+        if (
+            setting.working_dir
+            and not source_file.is_absolute()
+            and not source_file.exists()
+        ):
+            alt_path = setting.working_dir / source_file
+            if alt_path.exists():
+                source_file_final = alt_path
+
+        output_path_final = setting.output_path
+        if (
+            setting.working_dir
+            and not output_path_final.is_absolute()
+            and not str(output_path_final).startswith(str(setting.working_dir))
+        ):
+            output_path_final = setting.working_dir / output_path_final
+
+        can_bypass_ffmpeg = (
+            setting.video_codec == 'copy'
+            and setting.audio_codec == 'copy'
+            and not setting.scale
+        )
+
+        if can_bypass_ffmpeg:
+            if setting.dry_run:
+                console.print(
+                    f'[blue]Dry-run:[/blue] moving "{source_file_final}" to '
+                    f'"{output_path_final}"'
+                )
+                return
+
+            if output_path_final.exists():
+                if not setting.overwrite:
+                    raise FileExistsError(
+                        f'output_path "{output_path_final}" already exists. '
+                        'Use --overwrite, -y to overwrite it.'
+                    )
+                output_path_final.unlink()
+
+            output_path_final.parent.mkdir(parents=True, exist_ok=True)
+            import shutil
+
+            console.print(
+                f'Smart Merge: Moving single file to '
+                f'[green]"{output_path_final}"[/green]'
+            )
+            shutil.move(source_file_final, output_path_final)
+            return
 
     # For merge, we don't easily know the total duration without probing all parts
     # For now, let's just run it without a specific duration
@@ -454,6 +535,72 @@ async def flow(
                     if pending_tasks:
                         await asyncio.gather(*pending_tasks)
                         pending_tasks.clear()
+
+                    # Smart Merge: Optimization for single file copy
+                    can_bypass_ffmpeg = (
+                        len(job.setting.merge_paths) == 1
+                        and job.setting.video_codec == 'copy'
+                        and job.setting.audio_codec == 'copy'
+                        and not job.setting.scale
+                    )
+
+                    if can_bypass_ffmpeg:
+                        source_file = job.setting.merge_paths[0]
+                        source_file_final = source_file
+                        if (
+                            setting.working_dir
+                            and not source_file.is_absolute()
+                            and not source_file.exists()
+                        ):
+                            # Only join if it doesn't exist in CWD
+                            # and we have a working_dir
+                            alt_path = setting.working_dir / source_file
+                            if alt_path.exists():
+                                source_file_final = alt_path
+
+                        output_path_final = job.setting.output_path
+                        if (
+                            setting.working_dir
+                            and not output_path_final.is_absolute()
+                            # If the output_path already starts with working_dir,
+                            # don't join
+                            and not str(output_path_final).startswith(
+                                str(setting.working_dir)
+                            )
+                        ):
+                            output_path_final = setting.working_dir / output_path_final
+
+                        console.print(
+                            f'Smart Merge: Moving single file to '
+                            f'[green]"{output_path_final}"[/green]'
+                        )
+                        if not setting.dry_run:
+                            if output_path_final.exists() and not job.setting.overwrite:
+                                raise FileExistsError(
+                                    f'output_path "{output_path_final}" '
+                                    'already exists. Use --overwrite, -y to '
+                                    'overwrite it.'
+                                )
+                            output_path_final.parent.mkdir(parents=True, exist_ok=True)
+                            import shutil
+
+                            if output_path_final.exists():
+                                output_path_final.unlink()
+                            shutil.move(source_file_final, output_path_final)
+                        else:
+                            console.print(
+                                f'[blue]Dry-run:[/blue] moving "{source_file}" '
+                                f'to "{job.setting.output_path}"'
+                            )
+
+                        advance_amount = (
+                            job_duration.total_seconds()
+                            if job_duration is not None
+                            else 1
+                        )
+                        progress.advance(master_task_id, advance=advance_amount)
+                        continue
+
                     await run_ffmpeg(
                         args,
                         dry_run=setting.dry_run,
