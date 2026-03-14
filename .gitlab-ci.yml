@@ -49,7 +49,7 @@ test-multi-version:
     # 使用 docker build 跑測試，將版本號傳入 Dockerfile
     # 這樣測試環境內就會有 Dockerfile 定義好的 ffmpeg
     - docker build --target test --build-arg PYTHON_VERSION=$PY_VER -t ffxpy-test-$PY_VER .
-    - docker run --rm ffxpy-test-$PY_VER
+    - docker run --rm -e USE_COVERAGE=false ffxpy-test-$PY_VER
 
 build:
   extends:
