@@ -58,6 +58,9 @@ build:
   extends:
     - .docker_job
     - .rules-mr-and-trunk
+  rules:
+    - !reference [.rules-mr-and-trunk, rules]
+    - !reference [.rules-release, rules]
   stage: build
   script:
     - docker build --target publish -t $FQIN .
