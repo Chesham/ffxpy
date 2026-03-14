@@ -1,13 +1,28 @@
 [project]
 name = "ffxpy"
 version = "0.2.0"
-description = "A project designed to simplify complex ffmpeg operations by providing a more user-friendly interface and workflow."
+description = "A highly optimized CLI tool to simplify complex ffmpeg operations via YAML-defined workflows."
 readme = "README.md"
 authors = [
     { name = "chesham", email = "c.moweb@gmail.com" }
 ]
 license = { file = "LICENSE" }
 requires-python = ">=3.9"
+keywords = ["ffmpeg", "video", "multimedia", "workflow", "cli", "processing"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "Topic :: Multimedia :: Video :: Conversion",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+]
 dependencies = [
     "dateutils>=0.6.12",
     "isodate>=0.7.2",
@@ -16,6 +31,12 @@ dependencies = [
     "rich>=14.3.1",
     "typer>=0.21.1",
 ]
+
+[project.urls]
+Homepage = "https://github.com/chesham/ffxpy"
+Repository = "https://github.com/chesham/ffxpy.git"
+Issues = "https://github.com/chesham/ffxpy/issues"
+Changelog = "https://github.com/chesham/ffxpy/blob/main/CHANGELOG.md"
 
 [project.scripts]
 ffx = "ffxpy.__main__:app"
