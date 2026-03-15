@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## 🚀 [0.3.1] - 2026-03-15
+
+### 📝 Documentation & Examples
+- 📖 **Workflow Refactor**: Updated YAML examples in README to use standard multi-line format for better readability.
+- ⚙️ **Settings Reference**: Expanded configuration documentation with a comprehensive parameter table and environment variable (`FFXPY_*`) support.
+
+### ⚙️ CI/CD Enhancements
+- 🏗️ **Release Pipeline**: Enabled build stage for Git Tags to ensure full Docker image availability during production release.
+- 🔧 **Variable Fixes**: Resolved environment variable availability in `after_script` blocks and corrected the publication token for multi-environment support.
+
+---
+
 ## 🚀 [0.3.0] - 2026-03-14
 
 ### ✨ Features
