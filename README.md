@@ -36,19 +36,21 @@ The most powerful way to use `ffxpy` is via YAML-defined workflows. It features 
 # highlights.yml
 setting:
   input_path: "stream_archive.mp4"
+  overwrite: true
 
 jobs:
-  - name: "Intro Clip"
-    command: split
-    setting: { end: "00:00:15", output_path: "part1.mp4" }
+  - command: split
+    setting:
+      end: "00:00:15"
   
-  - name: "Best Action"
-    command: split
-    setting: { start: "01:20:00", end: "01:21:00", output_path: "part2.mp4" }
+  - command: split
+    setting:
+      start: "01:20:00"
+      end: "01:21:00"
 
-  - name: "Concatenate Highlights"
-    command: merge
-    setting: { output_path: "highlights_v1.mp4" }
+  - command: merge
+    setting:
+      output_path: "highlights.mp4"
 ```
 
 **Real-time Progress:**
@@ -84,10 +86,39 @@ ffx merge --with-split -o final_merged.mp4
 ffx merge --with-split --video-codec libx264 --video-bitrate 5M --scale 1280:720
 ```
 
-## ⚙️ Options Reference
+## ⚙️ Configuration & Options
 
-- `--working-dir`, `-w`: Base directory for all relative paths.
-- `--output-path`, `-o`: Explicit output path for the final result.
-- `--overwrite`, `-y`: Force overwrite existing files.
-- `--dry-run`, `-n`: Preview all generated ffmpeg commands without execution.
-- `--concurrency`, `-c`: Manual override for smart concurrency logic.
+`ffxpy` uses a unified settings system. You can configure it via:
+1. **YAML Flow file**: Under the `setting` key.
+2. **Environment Variables**: Use the `FFXPY_` prefix (e.g., `FFXPY_VIDEO_CODEC=libx264`).
+3. **CLI Arguments**: Standard flags like `--video-codec`.
+
+### Core Settings
+
+| Option | Description | Default |
+| :--- | :--- | :--- |
+| `input_path` | Source video file path | - |
+| `output_path` | Final output file path | - |
+| `working_dir` | Base directory for relative paths | Input file dir |
+| `overwrite` | Overwrite existing files | `false` |
+| `dry_run` | Preview ffmpeg commands without execution | `false` |
+| `concurrency` | Number of parallel jobs (Smart Auto-detection) | CPU-based |
+
+### Encoding & Processing
+
+| Option | Description | Default |
+| :--- | :--- | :--- |
+| `video_codec` | Video codec (e.g., `libx264`, `h264_nvenc`, `copy`) | `copy` |
+| `video_bitrate` | Video bitrate (e.g., `5M`, `2000k`) | - |
+| `audio_codec` | Audio codec (e.g., `aac`, `copy`) | `copy` |
+| `audio_bitrate` | Audio bitrate (e.g., `192k`) | - |
+| `scale` | Resize video (e.g., `1920:1080`, `1280:-1`) | - |
+| `preset` | ffmpeg preset (e.g., `fast`, `slow`, `p1` to `p7`) | - |
+| `skip_existing` | Skip the job if output file already exists | `false` |
+| `keep_temp` | Do not delete temporary split files after merge | `false` |
+
+### Path & Tool Discovery
+
+- `ffmpeg_path`: Manual path to `ffmpeg` executable.
+- `ffprobe_path`: Manual path to `ffprobe_path` executable.
+- `output_dir`: Directory where all outputs will be saved.
