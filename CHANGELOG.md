@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## 🚀 [0.3.2] - 2026-03-15
+
+### 📝 Documentation
+- 🛠️ **Changelog Localization**: Updated latest changes into English for global consistency.
+- 📖 **Example Standardization**: Ensuring all workflow examples are consistently formatted in README.
+
+---
+
 ## 🚀 [0.3.1] - 2026-03-15
 
 ### 📝 Documentation & Examples
