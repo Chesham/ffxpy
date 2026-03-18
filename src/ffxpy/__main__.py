@@ -467,7 +467,17 @@ async def flow(
         '[bold cyan]Overall Progress[/bold cyan]', total=total_seconds, metrics=''
     )
 
+    completed_jobs = 0
+    total_jobs = len(flow_data.jobs)
+
+    def update_overall_metrics():
+        metrics = f'[bold blue][{completed_jobs}/{total_jobs}][/bold blue]'
+        progress.update(master_task_id, metrics=metrics)
+
+    update_overall_metrics()
+
     async def run_job(job_args, job_duration, job_name):
+        nonlocal completed_jobs
         async with semaphore:
             result = await run_ffmpeg(
                 job_args,
@@ -477,6 +487,8 @@ async def flow(
                 progress=progress,
                 master_task_id=master_task_id,
             )
+            completed_jobs += 1
+            update_overall_metrics()
             return result
 
     async def cancel_pending_tasks():
@@ -517,6 +529,8 @@ async def flow(
                             else 1
                         )
                         progress.advance(master_task_id, advance=advance_amount)
+                        completed_jobs += 1
+                        update_overall_metrics()
                         continue
 
                 if not job.setting.input_path:
@@ -599,6 +613,8 @@ async def flow(
                             else 1
                         )
                         progress.advance(master_task_id, advance=advance_amount)
+                        completed_jobs += 1
+                        update_overall_metrics()
                         continue
 
                     await run_ffmpeg(
@@ -609,6 +625,8 @@ async def flow(
                         progress=progress,
                         master_task_id=master_task_id,
                     )
+                    completed_jobs += 1
+                    update_overall_metrics()
                 else:
                     task = asyncio.create_task(run_job(args, job_duration, job_name))
                     pending_tasks.append(task)
