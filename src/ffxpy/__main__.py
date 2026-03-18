@@ -633,17 +633,17 @@ async def flow(
 
             if pending_tasks:
                 await asyncio.gather(*pending_tasks)
-    except Exception:
+    except (Exception, asyncio.CancelledError):
         await cancel_pending_tasks()
         raise typer.Exit(code=1)
-
-    if not flow_data.setting.keep_temp:
-        for job in flow_data.jobs:
-            if job.command == Command.MERGE and not job.setting.keep_temp:
-                if job.setting.input_path:
-                    job.setting.input_path.unlink(missing_ok=True)
-                for path in job.setting.merge_paths:
-                    path.unlink(missing_ok=True)
+    finally:
+        if not flow_data.setting.keep_temp:
+            for job in flow_data.jobs:
+                if job.command == Command.MERGE and not job.setting.keep_temp:
+                    if job.setting.input_path:
+                        job.setting.input_path.unlink(missing_ok=True)
+                    for path in job.setting.merge_paths:
+                        path.unlink(missing_ok=True)
 
 
 @app.async_command(
@@ -891,17 +891,30 @@ async def run_ffmpeg(
     if not process.stderr:
         raise RuntimeError('ffmpeg process failed to start stderr stream')
 
-    if internal_progress:
-        with progress:
+    try:
+        if internal_progress:
+            with progress:
+                await asyncio.gather(
+                    stream_output(process.stderr),
+                    process.wait(),
+                )
+        else:
             await asyncio.gather(
                 stream_output(process.stderr),
                 process.wait(),
             )
-    else:
-        await asyncio.gather(
-            stream_output(process.stderr),
-            process.wait(),
-        )
+    except asyncio.CancelledError:
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            pass
+        await process.wait()
+
+        # Clean up incomplete output file on cancellation
+        output_path = Path(args[-1])
+        if output_path.exists():
+            output_path.unlink(missing_ok=True)
+        raise
 
     # Force completion to 100% regardless of ffmpeg output timing
     if total_duration:
