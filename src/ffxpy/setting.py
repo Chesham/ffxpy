@@ -54,6 +54,7 @@ class Setting(pydantic_settings.BaseSettings):
     scale: str | None = None
     merge_paths: list[Path] = pydantic.Field(default_factory=list)
     keep_temp: bool = False
+    skip_validation: bool = False
 
     @pydantic.field_validator(
         'working_dir', 'output_dir', 'output_path', 'input_path', mode='before'

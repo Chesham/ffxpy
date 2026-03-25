@@ -344,9 +344,16 @@ async def flow(
         parser=Path,
         metavar='TEXT',
     ),
+    skip_validation: bool = typer.Option(
+        None,
+        '--skip-validation',
+        help='Skip pre-flight validation (e.g. ffprobe checks).',
+    ),
 ):
     ctx = solve_context(ctx_)
     setting = ctx.setting
+    if skip_validation is not None:
+        setting.skip_validation = skip_validation
 
     flow_data = Flow.model_validate(
         yaml.safe_load(flow_path.open()), context={'setting': setting}
@@ -389,61 +396,66 @@ async def flow(
     )
 
     # Phase 1: Pre-flight Validation (No side effects)
-    console.print('[bold cyan]Validating workflow...[/bold cyan]')
     job_durations: list[timedelta | None] = []
-    for index, job in enumerate(flow_data.jobs):
-        job_name = job.name or f'Job #{index}'
-        job_duration = None
-        if job.command == Command.SPLIT:
-            if not job.setting.input_path:
-                raise ValueError(f'job {job_name} has no input path')
-            try:
-                info = await probe_video(
-                    job.setting.input_path, ffprobe_path=job.setting.ffprobe_path
-                )
-                # Range validation
-                if job.setting.start and job.setting.start > info.duration:
-                    raise ValueError(
-                        f'start time {job.setting.start} is out of range '
-                        f'({info.duration})'
+    if not flow_data.setting.skip_validation:
+        console.print('[bold cyan]Validating workflow...[/bold cyan]')
+        for index, job in enumerate(flow_data.jobs):
+            job_name = job.name or f'Job #{index}'
+            job_duration = None
+            if job.command == Command.SPLIT:
+                if not job.setting.input_path:
+                    raise ValueError(f'job {job_name} has no input path')
+                try:
+                    info = await probe_video(
+                        job.setting.input_path, ffprobe_path=job.setting.ffprobe_path
                     )
-                if job.setting.end and job.setting.end > info.duration:
-                    raise ValueError(
-                        f'end time {job.setting.end} is out of range ({info.duration})'
-                    )
-                if (
-                    job.setting.start
-                    and job.setting.end
-                    and job.setting.start >= job.setting.end
-                ):
-                    raise ValueError(
-                        f'start time {job.setting.start} must be less than '
-                        f'end time {job.setting.end}'
-                    )
-
-                actual_start = job.setting.start or timedelta(0)
-                actual_end = job.setting.end or info.duration
-                job_duration = actual_end - actual_start
-            except Exception as e:
-                console.print(f'[red]Validation failed for "{job_name}":[/red] {e}')
-                raise typer.Exit(code=1)
-        elif job.command == Command.MERGE:
-            if job.setting.merge_paths:
-                total_merge_duration = timedelta(0)
-                for path in job.setting.merge_paths:
-                    try:
-                        info = await probe_video(
-                            path, ffprobe_path=job.setting.ffprobe_path
+                    # Range validation
+                    if job.setting.start and job.setting.start > info.duration:
+                        raise ValueError(
+                            f'start time {job.setting.start} is out of range '
+                            f'({info.duration})'
                         )
-                        total_merge_duration += info.duration
-                    except Exception:
-                        # If we can't probe one of the files, we might not have
-                        # accurate total duration
-                        pass
-                if total_merge_duration.total_seconds() > 0:
-                    job_duration = total_merge_duration
+                    if job.setting.end and job.setting.end > info.duration:
+                        raise ValueError(
+                            f'end time {job.setting.end} is out of range '
+                            f'({info.duration})'
+                        )
+                    if (
+                        job.setting.start
+                        and job.setting.end
+                        and job.setting.start >= job.setting.end
+                    ):
+                        raise ValueError(
+                            f'start time {job.setting.start} must be less than '
+                            f'end time {job.setting.end}'
+                        )
 
-        job_durations.append(job_duration)
+                    actual_start = job.setting.start or timedelta(0)
+                    actual_end = job.setting.end or info.duration
+                    job_duration = actual_end - actual_start
+                except Exception as e:
+                    console.print(f'[red]Validation failed for "{job_name}":[/red] {e}')
+                    raise typer.Exit(code=1)
+            elif job.command == Command.MERGE:
+                if job.setting.merge_paths:
+                    total_merge_duration = timedelta(0)
+                    for path in job.setting.merge_paths:
+                        try:
+                            info = await probe_video(
+                                path, ffprobe_path=job.setting.ffprobe_path
+                            )
+                            total_merge_duration += info.duration
+                        except Exception:
+                            # If we can't probe one of the files, we might not have
+                            # accurate total duration
+                            pass
+                    if total_merge_duration.total_seconds() > 0:
+                        job_duration = total_merge_duration
+
+            job_durations.append(job_duration)
+    else:
+        console.print('[yellow]Skipping pre-flight validation...[/yellow]')
+        job_durations = [None] * len(flow_data.jobs)
 
     # Phase 2: Execution (Start making changes)
     pending_tasks: list[asyncio.Task] = []
