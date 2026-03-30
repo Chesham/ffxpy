@@ -9,7 +9,7 @@ import pydantic
 class StreamInfo(pydantic.BaseModel):
     index: int
     codec_type: str
-    codec_name: str
+    codec_name: str | None = None
     width: int | None = None
     height: int | None = None
 
@@ -49,16 +49,19 @@ async def probe_video(path: Path, ffprobe_path: str = 'ffprobe') -> VideoInfo:
         StreamInfo(
             index=s['index'],
             codec_type=s['codec_type'],
-            codec_name=s['codec_name'],
+            codec_name=s.get('codec_name'),
             width=s.get('width'),
             height=s.get('height'),
         )
         for s in streams_data
     ]
 
+    duration_str = format_data.get('duration')
+    duration = timedelta(seconds=float(duration_str)) if duration_str else timedelta(0)
+
     return VideoInfo(
         format_name=format_data['format_name'],
-        duration=timedelta(seconds=float(format_data['duration'])),
+        duration=duration,
         size=int(format_data['size']),
         streams=streams,
     )
