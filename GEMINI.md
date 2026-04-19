@@ -19,7 +19,11 @@ The core functionalities include:
 - **Multi-version Support**: Introduced `tox` configuration using `tox-uv` to support Python 3.9 through 3.13. Relaxed `pydantic-settings` and `coverage` version constraints in `pyproject.toml` for Python 3.9 compatibility.
 - **Test Infrastructure**: Added `USE_COVERAGE` toggle in BDD steps to allow running tests without coverage overhead or conflicts during multi-version testing.
 - **Robust Path Resolution**: Fixed path resolution issues in `Smart Merge` logic when using `working_dir` with relative paths.
-- **BDD Testing**: Added `features/smart_merge.feature` covering single-file copy, single-file transcoding, and workflow integration scenarios.
+- **Web UI Finalization**: Delivered a professional FastAPI/React-based Web UI with visual timeline, keyframe snapping, and a concurrent workflow editor.
+- **Concurrent Execution Engine**: Refactored the core runner to support thread-safe, monotonic progress accumulation and parallel task execution.
+- **Robust Resource Management**: Implemented automatic tracking and cleanup of intermediate files based on `keep_temp` settings.
+- **Flow YAML Synchronization**: Added bi-directional sync between the Web UI and raw YAML flow configurations.
+- **BDD Testing**: Full suite passed, ensuring compatibility between the new async engine and existing CLI features.
 
 ## Building and Running
 

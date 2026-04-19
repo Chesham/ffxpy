@@ -1,9 +1,7 @@
 import asyncio
 import os
-import re
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
 
 import isodate
 import typer
@@ -12,7 +10,6 @@ from rich.console import Console
 from rich.progress import (
     BarColumn,
     Progress,
-    TaskID,
     TextColumn,
     TimeElapsedColumn,
     TimeRemainingColumn,
@@ -23,6 +20,7 @@ from ffxpy.const import Command
 from ffxpy.context import Context, solve_context
 from ffxpy.models.flow import Flow, merge_normalize, split_normalize
 from ffxpy.probe import probe_video
+from ffxpy.runner import run_ffmpeg
 from ffxpy.setting import Setting
 from ffxpy.vendor import async_typer
 
@@ -334,6 +332,29 @@ async def merge(
     # For merge, we don't easily know the total duration without probing all parts
     # For now, let's just run it without a specific duration
     await run_ffmpeg(args, dry_run=setting.dry_run, job_name='Merging files')
+
+
+@app.async_command()
+async def ui(
+    port: int = typer.Option(8000, help='API port'),
+    host: str = typer.Option('127.0.0.1', help='API host'),
+):
+    """
+    Launch the Web UI for visual video editing.
+    """
+    import uvicorn
+
+    from ffxpy.web.main import app as web_app
+
+    console.print('[bold cyan]Starting ffxpy Web UI Backend...[/bold cyan]')
+    console.print(f'API available at: [blue]http://{host}:{port}[/blue]')
+    console.print(
+        '[yellow]Note: For development, run `npm run dev` in src/ffxpy/web/ui[/yellow]'
+    )
+
+    config = uvicorn.Config(web_app, host=host, port=port, log_level='info')
+    server = uvicorn.Server(config)
+    await server.serve()
 
 
 @app.async_command(no_args_is_help=True)
@@ -747,205 +768,6 @@ def compile_commandline(
         output_path_final = setting.working_dir / output_path.name
     args.append(str(output_path_final))
     return args
-
-
-async def run_ffmpeg(
-    args: list[str],
-    dry_run: bool = False,
-    total_duration: timedelta | None = None,
-    job_name: str | None = None,
-    progress: Progress | None = None,
-    master_task_id: TaskID | None = None,
-):
-    cmd_str = ' '.join(str(arg) for arg in args)
-    if dry_run:
-        console.print(f'[blue]Dry-run:[/blue] {cmd_str}')
-        return
-
-    process = await asyncio.create_subprocess_exec(
-        *[str(arg) for arg in args],
-        stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.PIPE,
-    )
-
-    internal_progress = False
-    if progress is None:
-        progress = Progress(
-            TextColumn('[progress.description]{task.description}'),
-            BarColumn(),
-            '[progress.percentage]{task.percentage:>3.0f}%',
-            TextColumn('{task.fields[metrics]}'),
-            TimeElapsedColumn(),
-            TimeRemainingColumn(),
-            console=console,
-            transient=False,
-        )
-
-        internal_progress = True
-
-    task_id = progress.add_task(
-        description=job_name or 'Processing...',
-        total=None,
-        metrics='',
-    )
-
-    # Shared state for progress metrics to prevent overwriting
-    progress_state: dict[str, str | None] = {'fps': None, 'speed': None}
-    last_completed = 0.0
-
-    async def stream_output(stream: asyncio.StreamReader):
-        nonlocal last_completed
-        # ffmpeg outputs progress to stderr
-        # Robust pattern for time: allows optional leading spaces and
-        # optional fractional part
-        time_pattern = re.compile(r'time=\s*(\d+):(\d+):(\d+)(?:\.(\d+))?')
-        speed_pattern = re.compile(r'speed=\s*([\d.]+x)')
-        fps_pattern = re.compile(r'fps=\s*([\d.]+)')
-
-        buffer = b''
-        while True:
-            # Read chunks instead of lines to catch \r
-            chunk = await stream.read(1024)
-            if not chunk:
-                break
-
-            buffer += chunk
-            # Robust line splitting
-            while True:
-                r_idx = buffer.find(b'\r')
-                n_idx = buffer.find(b'\n')
-                if r_idx == -1 and n_idx == -1:
-                    break
-
-                split_idx = (
-                    min(r_idx, n_idx)
-                    if r_idx != -1 and n_idx != -1
-                    else (r_idx if r_idx != -1 else n_idx)
-                )
-                line_bytes = buffer[:split_idx]
-                buffer = buffer[split_idx + 1 :]
-
-                line_str = line_bytes.decode('utf-8', errors='replace').strip()
-
-                if not line_str:
-                    continue
-
-                # Update progress and metrics
-                update_kwargs: dict[str, Any] = {}
-
-                # Distinguish between machine-readable progress (-progress pipe:2)
-                # and legacy status line
-                # Machine-readable lines have exactly one '=' and no internal
-                # spaces in the key.
-                is_machine_format = (
-                    '=' in line_str
-                    and ' ' not in line_str.partition('=')[0].strip()
-                    and line_str.count('=') == 1
-                )
-
-                if is_machine_format:
-                    key, _, value = line_str.partition('=')
-                    key, value = key.strip(), value.strip()
-
-                    if key == 'out_time' and total_duration:
-                        time_match = time_pattern.search(f'time={value}')
-                        if time_match:
-                            groups = time_match.groups()
-                            hours, minutes, seconds = map(int, groups[:3])
-                            update_kwargs['completed'] = (
-                                hours * 3600 + minutes * 60 + seconds
-                            )
-                    elif key == 'fps':
-                        try:
-                            f_val = float(value)
-                            if f_val > 0:
-                                progress_state['fps'] = f'{value}fps'
-                        except ValueError:
-                            pass
-                    elif key == 'speed':
-                        if value != 'N/A':
-                            progress_state['speed'] = value
-                else:
-                    # Legacy status line parsing (can have multiple '=' or spaces)
-                    time_match = time_pattern.search(line_str)
-                    if time_match and total_duration:
-                        groups = time_match.groups()
-                        hours, minutes, seconds = map(int, groups[:3])
-                        update_kwargs['completed'] = (
-                            hours * 3600 + minutes * 60 + seconds
-                        )
-
-                    speed_match = speed_pattern.search(line_str)
-                    fps_match = fps_pattern.search(line_str)
-                    if fps_match:
-                        progress_state['fps'] = f'{fps_match.group(1)}fps'
-                    if speed_match:
-                        progress_state['speed'] = speed_match.group(1)
-
-                # Always build metrics string from persistent state
-                display_parts = [v for v in progress_state.values() if v]
-                if display_parts:
-                    update_kwargs['metrics'] = f'({", ".join(display_parts)})'
-
-                if update_kwargs:
-                    if 'completed' in update_kwargs and total_duration is not None:
-                        new_completed = float(update_kwargs['completed'])
-                        delta = new_completed - last_completed
-                        last_completed = new_completed
-
-                        update_kwargs['total'] = total_duration.total_seconds()
-                        if master_task_id is not None:
-                            progress.advance(master_task_id, advance=delta)
-
-                    progress.update(task_id, **update_kwargs)
-
-    if not process.stderr:
-        raise RuntimeError('ffmpeg process failed to start stderr stream')
-
-    try:
-        if internal_progress:
-            with progress:
-                await asyncio.gather(
-                    stream_output(process.stderr),
-                    process.wait(),
-                )
-        else:
-            await asyncio.gather(
-                stream_output(process.stderr),
-                process.wait(),
-            )
-    except asyncio.CancelledError:
-        try:
-            process.terminate()
-        except ProcessLookupError:
-            pass
-        await process.wait()
-
-        # Clean up incomplete output file on cancellation
-        output_path = Path(args[-1])
-        if output_path.exists():
-            output_path.unlink(missing_ok=True)
-        raise
-
-    # Force completion to 100% regardless of ffmpeg output timing
-    if total_duration:
-        new_completed = total_duration.total_seconds()
-        delta = new_completed - last_completed
-        progress.update(task_id, completed=new_completed)
-        if master_task_id is not None:
-            progress.advance(master_task_id, advance=delta)
-    else:
-        # For tasks without known duration (like merge), mark as finished
-        progress.update(task_id, total=100, completed=100)
-        if master_task_id is not None:
-            progress.advance(master_task_id, advance=1)
-
-    if process.returncode != 0:
-        console.print(f'[red]Error:[/red] ffmpeg exited with code {process.returncode}')
-        raise typer.Exit(code=process.returncode or 1)
-
-    return process
 
 
 if __name__ == '__main__':
