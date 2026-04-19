@@ -1,15 +1,15 @@
 import asyncio
-import hashlib
 import json
+import re
 import tempfile
 import uuid
+from datetime import timedelta
 from pathlib import Path
-from typing import Any, Coroutine, Dict, List, Optional, Set
+from typing import Any, Coroutine, Dict, List
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel
 
 from ffxpy.const import Command
 from ffxpy.models.flow import Flow, FlowJob
@@ -31,13 +31,9 @@ settings = Setting()
 TEMP_DIR = Path(tempfile.gettempdir()) / 'ffxpy_web'
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
+# Global stores
 keyframes_cache: Dict[str, List[float]] = {}
 active_jobs: Dict[str, asyncio.Queue] = {}
-
-
-class ExecuteRequest(BaseModel):
-    jobs: List[Dict[str, Any]]
-    setting: Optional[Dict[str, Any]] = None
 
 
 @app.get('/api/probe')
@@ -58,8 +54,6 @@ async def stream_video(path: str, request: Request):
     range_header = request.headers.get('range')
 
     if range_header:
-        import re
-
         match = re.match(r'bytes=(\d+)-(\d*)', range_header)
         if match:
             start = int(match.group(1))
@@ -92,175 +86,168 @@ async def stream_video(path: str, request: Request):
 
 
 @app.get('/api/keyframes')
-async def get_keyframes(path: str):
+async def get_keyframes(path: str, time: float = -1.0, range_sec: float = 2.0):
+    """
+    Hybrid Keyframe Scanning.
+    - If time < 0: Fast rough scan (Index Scan).
+    - If time >= 0: Precise local scan (±range_sec).
+    """
     video_path = Path(path)
     if not video_path.exists():
-        raise HTTPException(status_code=404, detail='File not found')
+        raise HTTPException(status_code=404)
 
+    import hashlib
     path_hash = hashlib.md5(str(video_path.resolve()).encode()).hexdigest()
-    if path_hash in keyframes_cache:
-        return {'keyframes': keyframes_cache[path_hash]}
 
-    cmd = [
-        settings.ffprobe_path,
-        '-v',
-        'error',
-        '-skip_frame',
-        'nokey',
-        '-select_streams',
-        'v:0',
-        '-show_entries',
-        'frame=pts_time,pkt_pts_time',
-        '-of',
-        'json',
-        str(video_path),
-    ]
+    if time < 0:
+        # Fast rough scan for the whole video
+        if path_hash in keyframes_cache:
+            return {'keyframes': keyframes_cache[path_hash]}
+        cmd = [
+            settings.ffprobe_path, '-v', 'error', '-skip_frame', 'nokey',
+            '-select_streams', 'v:0', '-show_entries', 'frame=pts_time',
+            '-of', 'json', str(video_path)
+        ]
+    else:
+        # Precise local scan
+        start = max(0.0, time - range_sec)
+        end = time + range_sec
+        cmd = [
+            settings.ffprobe_path, '-v', 'error', '-select_streams', 'v:0',
+            '-show_entries', 'frame=best_effort_timestamp_time,key_frame',
+            '-read_intervals', f'{start}%{end}', '-of', 'json', str(video_path)
+        ]
+
     process = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
     stdout, _ = await process.communicate()
     data = json.loads(stdout.decode())
-    keyframes = [
-        float(f.get('pts_time') or f.get('pkt_pts_time'))
-        for f in data.get('frames', [])
-        if f.get('pts_time') or f.get('pkt_pts_time')
-    ]
-    keyframes_cache[path_hash] = keyframes
-    return {'keyframes': keyframes}
+
+    kfs = []
+    for f in data.get('frames', []):
+        # In precise mode (time >= 0), only take real keyframes
+        if time >= 0 and f.get('key_frame') != 1:
+            continue
+        t_val = f.get('best_effort_timestamp_time') or f.get('pts_time')
+        if t_val is not None:
+            kfs.append(float(t_val))
+
+    sorted_kfs = sorted(list(set(kfs)))
+    if time < 0:
+        keyframes_cache[path_hash] = sorted_kfs
+    return {'keyframes': sorted_kfs}
 
 
 async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
     queue = active_jobs[job_id]
-    from datetime import timedelta
-
     from ffxpy.__main__ import compile_commandline
 
     try:
         flow = Flow.model_validate(request_data)
-        resources_to_cleanup: Set[Path] = set()
+        res_cleanup = set()
         total_jobs = len(flow.jobs)
         job_ratios: Dict[int, float] = {i: 0.0 for i in range(total_jobs)}
         progress_lock = asyncio.Lock()
 
         job_durations: List[float] = []
         for job in flow.jobs:
-            dur = 1.0
+            w = 1.0
             if job.command == Command.SPLIT:
-                if job.setting.input_path:
-                    try:
-                        info = await probe_video(
-                            job.setting.input_path,
-                            ffprobe_path=settings.ffprobe_path,
-                        )
-                        s = job.setting.start or timedelta(0)
-                        e = job.setting.end or info.duration
-                        dur = max(0.1, (e - s).total_seconds())
-                    except Exception:
-                        dur = 1.0
+                try:
+                    info = await probe_video(
+                        job.setting.input_path, ffprobe_path=settings.ffprobe_path
+                    )
+                    s = job.setting.start or timedelta(0)
+                    e = job.setting.end or info.duration
+                    w = max(0.1, (e - s).total_seconds())
+                except Exception:
+                    w = 1.0
             elif job.command == Command.MERGE:
                 try:
-                    m_dur = 0.0
+                    m_w = 0.0
                     for p in job.setting.merge_paths:
-                        info = await probe_video(
-                            p, ffprobe_path=settings.ffprobe_path
-                        )
-                        m_dur += info.duration.total_seconds()
-                    dur = max(1.0, m_dur)
+                        probe = await probe_video(p, settings.ffprobe_path)
+                        m_w += probe.duration.total_seconds()
+                    w = max(1.0, m_w)
                 except Exception:
-                    dur = 10.0
-            job_durations.append(dur)
+                    w = 10.0
+            job_durations.append(w)
 
         async def run_single_job(index: int, job: FlowJob):
             job_name = job.name or f'Job #{index + 1}'
             weight = job_durations[index]
-
             before_inputs = {}
             if job.command == Command.MERGE:
                 before_inputs = {'-f': 'concat', '-safe': '0'}
                 if job.setting.input_path:
-                    job.setting.input_path.write_text(
-                        ''.join(
-                            f"file '{p.resolve()}'\n" for p in job.setting.merge_paths
-                        )
-                    )
-                    resources_to_cleanup.add(job.setting.input_path)
+                    lines = [f"file '{p.resolve()}'\n" for p in job.setting.merge_paths]
+                    job.setting.input_path.write_text(''.join(lines))
+                    res_cleanup.add(job.setting.input_path)
 
             if job.command == Command.SPLIT and job.setting.output_path:
-                resources_to_cleanup.add(job.setting.output_path)
+                res_cleanup.add(job.setting.output_path)
 
-            # Type checking for compile_commandline
-            input_p = job.setting.input_path or Path('temp.mp4')
-            output_p = job.setting.output_path or Path('out.mp4')
-
+            input_path = job.setting.input_path or Path('temp.mp4')
+            output_path = job.setting.output_path or Path('out.mp4')
             args = compile_commandline(
-                job.setting,
-                input_p,
-                output_p,
-                before_inputs=before_inputs,
+                job.setting, input_path, output_path, before_inputs=before_inputs
             )
 
-            async def progress_callback(
-                data: Dict[str, Any],
-            ) -> Coroutine[Any, Any, None]:
+            async def progress_callback(data: Dict[str, Any]) -> Coroutine[Any, Any, None]:
                 if data['status'] == 'processing':
                     cur_p = data.get('completed', 0.0)
                     ratio = min(1.0, cur_p / weight) if weight > 0 else 1.0
                     async with progress_lock:
                         job_ratios[index] = ratio
                         overall = sum(job_ratios.values()) / total_jobs
-                        data.update(
-                            {
-                                'overall_total': 1.0,
-                                'overall_completed': overall,
-                                'job_index': index,
-                                'total_jobs': total_jobs,
-                                'completed': ratio * 100,
-                                'total': 100,
-                            }
-                        )
+                        data.update({
+                            'overall_total': 1.0,
+                            'overall_completed': overall,
+                            'job_index': index,
+                            'total_jobs': total_jobs,
+                            'completed': ratio * 100,
+                            'total': 100
+                        })
                     await queue.put(data)
                 return None  # type: ignore
 
-            await queue.put(
-                {
-                    'status': 'processing',
-                    'job_index': index,
-                    'completed': 0,
-                    'total': 100,
-                    'job_name': job_name,
-                    'overall_total': 1.0,
-                    'overall_completed': sum(job_ratios.values()) / total_jobs,
-                }
-            )
+            initial_msg = {
+                'status': 'processing',
+                'job_index': index,
+                'completed': 0,
+                'total': 100,
+                'job_name': job_name,
+                'overall_total': 1.0,
+                'overall_completed': sum(job_ratios.values()) / total_jobs
+            }
+            await queue.put(initial_msg)
 
             success = await run_ffmpeg(
                 args,
                 dry_run=flow.setting.dry_run,
                 total_duration=timedelta(seconds=weight),
                 job_name=job_name,
-                on_progress=progress_callback,  # type: ignore
+                on_progress=progress_callback
             )
-
             if not success:
                 async with progress_lock:
-                    await queue.put(
-                        {'status': 'failed', 'job_name': job_name, 'job_index': index}
-                    )
+                    await queue.put({
+                        'status': 'failed', 'job_name': job_name, 'job_index': index
+                    })
                 raise RuntimeError(f'Job {job_name} failed')
 
             async with progress_lock:
                 job_ratios[index] = 1.0
                 overall = sum(job_ratios.values()) / total_jobs
-                await queue.put(
-                    {
-                        'status': 'job_done',
-                        'job_name': job_name,
-                        'job_index': index,
-                        'overall_total': 1.0,
-                        'overall_completed': overall,
-                        'total_jobs': total_jobs,
-                    }
-                )
+                await queue.put({
+                    'status': 'job_done',
+                    'job_name': job_name,
+                    'job_index': index,
+                    'overall_total': 1.0,
+                    'overall_completed': overall,
+                    'total_jobs': total_jobs
+                })
 
         semaphore = asyncio.Semaphore(flow.setting.concurrency)
 
@@ -269,35 +256,32 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
                 return await run_single_job(i, j)
 
         splits = [
-            sem_run(i, j)
-            for i, j in enumerate(flow.jobs)
+            sem_run(i, j) for i, j in enumerate(flow.jobs)
             if j.command == Command.SPLIT
         ]
         if splits:
             await asyncio.gather(*splits)
 
         merges = [
-            (i, j) for i, j in enumerate(flow.jobs) if j.command == Command.MERGE
+            (i, j) for i, j in enumerate(flow.jobs)
+            if j.command == Command.MERGE
         ]
         for i, j in merges:
             await run_single_job(i, j)
 
         if not flow.setting.keep_temp:
-            for f in resources_to_cleanup:
+            for f in res_cleanup:
                 if f.exists():
                     try:
                         f.unlink()
                     except Exception:
                         pass
-
-        await queue.put(
-            {
-                'status': 'finished',
-                'overall_total': 1.0,
-                'overall_completed': 1.0,
-                'total_jobs': total_jobs,
-            }
-        )
+        await queue.put({
+            'status': 'finished',
+            'overall_total': 1.0,
+            'overall_completed': 1.0,
+            'total_jobs': total_jobs
+        })
     except Exception as e:
         await queue.put({'status': 'failed', 'error': str(e)})
 
@@ -314,7 +298,7 @@ async def execute_task(request: Request, background_tasks: BackgroundTasks):
 @app.get('/api/events/{job_id}')
 async def get_events(job_id: str):
     if job_id not in active_jobs:
-        raise HTTPException(status_code=404, detail='Job not found')
+        raise HTTPException(status_code=404)
     queue = active_jobs[job_id]
 
     async def event_generator():
@@ -331,16 +315,13 @@ async def get_events(job_id: str):
             await asyncio.sleep(2)
             if job_id in active_jobs:
                 del active_jobs[job_id]
-
     return StreamingResponse(event_generator(), media_type='text/event-stream')
 
 
 if UI_DIST_DIR.exists():
     from fastapi.staticfiles import StaticFiles
-
     app.mount('/', StaticFiles(directory=str(UI_DIST_DIR), html=True), name='ui')
 
 if __name__ == '__main__':
     import uvicorn
-
     uvicorn.run(app, host='0.0.0.0', port=8000)
