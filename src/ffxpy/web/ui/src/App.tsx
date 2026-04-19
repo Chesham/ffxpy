@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { 
   Loader2, CheckCircle2, Search, Zap, Plus, Trash2, ChevronLeft, ChevronRight, 
   FileVideo, Settings2, Combine, ArrowRight, Clock, Code, LocateFixed, 
-  History, MonitorPlay, Layers, CircleDot, X, AlertCircle, PlayCircle
+  History as HistoryIcon, MonitorPlay, Layers, CircleDot, X, AlertCircle, PlayCircle, Film, Boxes
 } from 'lucide-react'
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
@@ -14,9 +14,8 @@ const API_BASE = 'http://localhost:8000'
 interface VideoInfo { format_name: string; duration: string; duration_sec: number }
 interface JobSetting { start?: string; end?: string; video_codec?: string; video_bitrate?: string; audio_codec?: string; audio_bitrate?: string; scale?: string; output_dir?: string; output_path?: string; keep_temp?: boolean; skip_existing?: boolean }
 interface Job { id: string; name: string; command: 'split' | 'merge'; setting: JobSetting }
-
 interface JobStatus { status: string; completed: number; total: number; name?: string }
-interface WorkflowState { status: string; overall_completed: number; overall_total: number; jobStatuses: Record<number, JobStatus> }
+interface WorkflowState { status: string; overall_completed: number; overall_total: number; total_jobs: number; jobStatuses: Record<number, JobStatus> }
 
 export default function App() {
   const [videoPath, setVideoPath] = useState('')
@@ -57,16 +56,38 @@ export default function App() {
 
   useEffect(() => {
     if (isSyncingFromYaml.current) return
-    const clean = (o: any) => { const r={...o}; Object.keys(r).forEach(k=>{if(r[k]===''||r[k]===undefined) delete r[k]}); return r }
-    setYamlText(yaml.dump({ setting: clean({...globalSetting, input_path: videoPath}), jobs: jobs.map(j=>({command:j.command, name:j.name, setting:clean(j.setting)})) }, { indent: 2, skipInvalid: true, noRefs: true }))
+    const clean = (o: any) => {
+       const r = { ...o }
+       Object.keys(r).forEach(k => { if (r[k] === '' || r[k] === undefined) delete r[k] })
+       return r
+    }
+    const flowObj = {
+      setting: clean({ ...globalSetting, input_path: videoPath }),
+      jobs: jobs.map(j => ({ command: j.command, name: j.name, setting: clean(j.setting) }))
+    }
+    setYamlText(yaml.dump(flowObj, { indent: 2, skipInvalid: true, noRefs: true }))
   }, [globalSetting, jobs, videoPath])
 
   const handleYamlChange = (v: string) => {
-    setYamlText(v); try {
-      isSyncingFromYaml.current = true; const d = yaml.load(v) as any
-      if (d?.setting) { if(d.setting.input_path) setVideoPath(d.setting.input_path); const {input_path, ...rest}=d.setting; setGlobalSetting(prev => ({ ...prev, ...rest })) }
-      if (Array.isArray(d?.jobs)) setJobs(d.jobs.map((j:any)=>({ id: Math.random().toString(36).substr(2,9), ...j, setting: j.setting||{} })))
-    } catch(e){} finally { isSyncingFromYaml.current = false }
+    setYamlText(v)
+    try {
+      isSyncingFromYaml.current = true
+      const d = yaml.load(v) as any
+      if (d && typeof d === 'object') {
+        if (d.setting) {
+          if (d.setting.input_path) setVideoPath(d.setting.input_path)
+          const { input_path, ...rest } = d.setting
+          setGlobalSetting(prev => ({ ...prev, ...rest }))
+        }
+        if (Array.isArray(d.jobs)) {
+          setJobs(d.jobs.map((j: any) => ({ 
+            id: j.id || Math.random().toString(36).substr(2, 9), 
+            ...j, 
+            setting: j.setting || {} 
+          })))
+        }
+      }
+    } catch(e) {} finally { isSyncingFromYaml.current = false }
   }
 
   const stepKeyframe = (dir: 'prev' | 'next') => {
@@ -82,8 +103,7 @@ export default function App() {
   }
 
   const handleExecute = async () => {
-    setIsModalOpen(true); setIsSubmitting(true); setError(null);
-    setWorkflow({ status: 'preparing', overall_completed: 0, overall_total: 1.0, jobStatuses: {} })
+    setIsModalOpen(true); setWorkflow({ status: 'preparing', overall_completed: 0, overall_total: 1.0, total_jobs: jobs.length, jobStatuses: {} }); setIsSubmitting(true); setError(null)
     try {
       const res = await fetch(`${API_BASE}/api/execute`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(yaml.load(yamlText)) })
       if (!res.ok) throw new Error(await res.text())
@@ -92,7 +112,7 @@ export default function App() {
       es.onmessage = (e) => {
         const data = JSON.parse(e.data)
         setWorkflow(prev => {
-          const next = prev ? { ...prev } : { status: 'running', overall_completed: 0, overall_total: 1.0, jobStatuses: {} }
+          const next = prev ? { ...prev } : { status: 'running', overall_completed: 0, overall_total: 1.0, total_jobs: jobs.length, jobStatuses: {} }
           if (data.status === 'finished') { next.status = 'finished'; next.overall_completed = 1.0; }
           else if (data.status === 'failed') next.status = 'failed'
           else {
@@ -124,144 +144,110 @@ export default function App() {
   const activeJob = jobs.find(j => j.id === activeJobId)
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-gray-300 w-full flex flex-col font-sans overflow-hidden">
-      <nav className="h-14 border-b border-white/5 bg-[#111] flex items-center px-6 justify-between shrink-0 z-20 shadow-xl">
-        <div className="flex items-center gap-6">
-           <div className="flex items-center gap-2"><FileVideo className="text-cyan-500" size={20}/><span className="font-black text-white tracking-tighter italic text-lg">FFXPY.WEB</span></div>
-           <div className="flex items-center gap-3">
-              <input className="bg-black/60 border border-white/10 rounded px-4 py-1.5 text-[11px] w-[350px] outline-none focus:border-cyan-500/50 font-mono transition-all" placeholder="Path..." value={videoPath} onChange={e=>setVideoPath(e.target.value)} onKeyDown={e=>e.key==='Enter'&&handleProbe()}/>
-              <button onClick={handleProbe} disabled={isSubmitting} className="bg-white text-black font-black text-[9px] px-3 py-1 rounded hover:bg-cyan-500 transition-colors uppercase disabled:opacity-50">Load</button>
+    <div className="h-screen w-screen bg-[#050505] text-gray-300 flex flex-col font-sans overflow-hidden">
+      <nav className="h-14 border-b border-white/[0.03] bg-black/40 backdrop-blur-xl flex items-center px-6 justify-between shrink-0 z-20 shadow-2xl">
+        <div className="flex items-center gap-8">
+           <div className="flex items-center gap-2.5 group cursor-default">
+             <div className="w-8 h-8 bg-cyan-600 rounded-lg flex items-center justify-center shadow-lg shadow-cyan-900/40 group-hover:rotate-6 transition-transform"><Boxes size={20} className="text-white" /></div>
+             <div className="flex flex-col leading-none"><span className="font-black text-white tracking-tighter text-base uppercase">FFXPY</span><span className="text-[9px] font-bold text-cyan-500 uppercase tracking-widest">Workflow Studio</span></div>
            </div>
            <div className="h-6 w-[1px] bg-white/10" />
-           <div className="flex gap-4 items-center text-gray-500 uppercase font-bold text-[9px]">
-              <label className="flex items-center gap-2 cursor-pointer group"><input type="checkbox" className="sr-only peer" checked={globalSetting.keep_temp} onChange={e=>setGlobalSetting({...globalSetting, keep_temp: e.target.checked})}/><div className="w-7 h-4 bg-gray-800 peer-checked:bg-cyan-600 rounded-full relative transition-all"><div className="absolute left-1 top-1 w-2 h-2 bg-white rounded-full transition-all peer-checked:left-4"></div></div><span>Keep Temp</span></label>
-              <label className="flex items-center gap-2 cursor-pointer group"><input type="checkbox" className="sr-only peer" checked={globalSetting.skip_existing} onChange={e=>setGlobalSetting({...globalSetting, skip_existing: e.target.checked})}/><div className="w-7 h-4 bg-gray-800 peer-checked:bg-cyan-600 rounded-full relative transition-all"><div className="absolute left-1 top-1 w-2 h-2 bg-white rounded-full transition-all peer-checked:left-4"></div></div><span>Skip Existing</span></label>
+           <div className="flex items-center gap-3">
+              <input className="bg-black/80 border border-white/5 rounded-md px-4 py-1.5 text-[11px] w-[400px] outline-none focus:border-cyan-500/50 font-mono transition-all" placeholder="Video path..." value={videoPath} onChange={e=>setVideoPath(e.target.value)} onKeyDown={e=>e.key==='Enter'&&handleProbe()}/>
+              <button onClick={handleProbe} disabled={isSubmitting} className="bg-white/90 text-black font-black text-[10px] px-4 py-1.5 rounded-md hover:bg-cyan-500 uppercase disabled:opacity-50">Load</button>
+           </div>
+           <div className="h-6 w-[1px] bg-white/10" />
+           <div className="flex gap-6 items-center text-gray-500 uppercase font-black text-[9px]">
+              <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" className="sr-only peer" checked={globalSetting.keep_temp} onChange={e=>setGlobalSetting({...globalSetting, keep_temp: e.target.checked})}/><div className="w-7 h-3.5 bg-white/5 border border-white/5 peer-checked:bg-cyan-600 rounded-full relative transition-all"><div className="absolute left-0.5 top-0.5 w-2 h-2 bg-white rounded-full transition-all peer-checked:left-4"></div></div><span>Keep Temp</span></label>
+              <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" className="sr-only peer" checked={globalSetting.skip_existing} onChange={e=>setGlobalSetting({...globalSetting, skip_existing: e.target.checked})}/><div className="w-7 h-3.5 bg-white/5 border border-white/5 peer-checked:bg-cyan-600 rounded-full relative transition-all"><div className="absolute left-0.5 top-0.5 w-2 h-2 bg-white rounded-full transition-all peer-checked:left-4"></div></div><span>Skip Existing</span></label>
            </div>
         </div>
-        <button onClick={handleExecute} disabled={isSubmitting||!jobs.length} className="bg-cyan-600 hover:bg-cyan-400 text-white font-black text-[10px] px-6 py-2 rounded-full shadow-lg transition-all flex items-center gap-2 tracking-widest uppercase">{isSubmitting ? <Loader2 className="animate-spin" size={14}/> : <PlayCircle size={14}/>} Run Flow</button>
+        <button onClick={handleExecute} disabled={isSubmitting||!jobs.length} className="bg-cyan-600 hover:bg-cyan-400 text-white font-black text-[10px] px-8 py-2.5 rounded-full shadow-lg transition-all flex items-center gap-2 tracking-widest uppercase">{isSubmitting ? <Loader2 className="animate-spin" size={14}/> : <PlayCircle size={14}/>} Run Pipeline</button>
       </nav>
 
-      <div className="flex-1 flex overflow-hidden">
-        <div className="flex-1 flex flex-col p-6 gap-6 overflow-hidden">
-           <div className="flex-1 bg-black rounded-2xl overflow-hidden border border-white/5 shadow-2xl relative group">
-              {videoInfo ? <video ref={videoRef} src={`${API_BASE}/api/stream?path=${encodeURIComponent(videoPath)}`} className="w-full h-full object-contain" onTimeUpdate={()=>!videoRef.current?.seeking&&setCurrentTime(videoRef.current.currentTime)} controls /> : <div className="w-full h-full flex flex-col items-center justify-center opacity-5"><MonitorPlay size={100} /></div>}
+      <div className="flex-1 flex overflow-hidden w-full">
+        <div className="flex-1 flex flex-col p-4 gap-4 overflow-hidden bg-black/20">
+           <div className="flex-1 bg-black rounded-3xl overflow-hidden border border-white/[0.03] shadow-2xl relative">
+              {videoInfo ? <video ref={videoRef} src={`${API_BASE}/api/stream?path=${encodeURIComponent(videoPath)}`} className="w-full h-full object-contain" onTimeUpdate={()=>!videoRef.current?.seeking&&setCurrentTime(videoRef.current.currentTime)} controls /> : <div className="w-full h-full flex flex-col items-center justify-center opacity-[0.03]"><Film size={180} /></div>}
            </div>
-           <div className="bg-[#121212] p-5 rounded-2xl border border-white/5 space-y-4 shadow-xl shrink-0">
-              <div className="flex justify-between items-center">
-                 <div className="flex items-center gap-4 bg-black/40 p-1 rounded-xl border border-white/5">
-                    <button onClick={() => stepKeyframe('prev')} className="p-2.5 hover:bg-white/5 rounded-lg text-cyan-500 transition-colors"><ChevronLeft size={24}/></button>
-                    <div className="flex flex-col items-center px-4 min-w-[150px]"><span className="text-[9px] font-bold text-gray-600 uppercase tracking-widest">Timecode</span><span className="font-mono text-2xl text-white font-bold tracking-tighter">{formatTime(currentTime)}</span></div>
-                    <button onClick={() => stepKeyframe('next')} className="p-2.5 hover:bg-white/5 rounded-lg text-cyan-500 transition-colors"><ChevronRight size={24}/></button>
+           <div className="bg-[#0e0e0e]/80 backdrop-blur-md p-5 rounded-3xl border border-white/[0.05] space-y-5 shadow-2xl shrink-0">
+              <div className="flex justify-between items-center px-2">
+                 <div className="flex items-center gap-4 bg-white/[0.02] p-1 rounded-2xl border border-white/[0.03]">
+                    <button onClick={() => stepKeyframe('prev')} className="p-3 hover:bg-white/5 rounded-xl text-cyan-500"><ChevronLeft size={28}/></button>
+                    <div className="flex flex-col items-center px-6 min-w-[180px] border-x border-white/[0.03]"><span className="text-[9px] font-black text-gray-600 uppercase tracking-widest mb-1">Timecode</span><span className="font-mono text-2xl text-white font-black">{formatTime(currentTime)}</span></div>
+                    <button onClick={() => stepKeyframe('next')} className="p-3 hover:bg-white/5 rounded-xl text-cyan-500"><ChevronRight size={28}/></button>
                  </div>
                  <div className="flex gap-3">
-                    <button onClick={() => addJob('split')} className="bg-white/5 hover:bg-cyan-500 hover:text-black border border-white/10 text-white font-black text-[10px] px-8 py-3 rounded-xl flex items-center gap-2 transition-all shadow-lg active:scale-95"><Plus size={16}/> ADD SPLIT</button>
-                    <button onClick={() => addJob('merge')} className="bg-white/5 hover:bg-indigo-500 hover:text-white border border-white/10 text-white font-black text-[10px] px-8 py-3 rounded-xl flex items-center gap-2 transition-all shadow-lg active:scale-95"><Combine size={16}/> ADD MERGE</button>
+                    <button onClick={() => addJob('split')} className="bg-white/5 hover:bg-cyan-500 hover:text-black border border-white/10 text-white font-black text-[11px] px-10 py-3.5 rounded-2xl flex items-center gap-2 transition-all shadow-xl active:scale-95 group"><Plus size={18} className="group-hover:rotate-90 transition-transform"/> ADD SPLIT</button>
+                    <button onClick={() => addJob('merge')} className="bg-white/5 hover:bg-indigo-500 hover:text-white border border-white/10 text-white font-black text-[11px] px-10 py-3.5 rounded-2xl flex items-center gap-2 transition-all shadow-xl active:scale-95 group"><Combine size={18}/> ADD MERGE</button>
                  </div>
               </div>
-              <div className="flex gap-[1px] opacity-10">
-                {videoInfo && keyframes.length < 1500 && keyframes.map(k => (<div key={k} className="h-1 bg-cyan-500 rounded-full flex-1" />))}
+              <div className="flex gap-[1px] opacity-10 px-1">
+                {videoInfo && keyframes.length < 2000 && keyframes.map(k => (<div key={k} className="h-1 bg-cyan-500 rounded-full flex-1" />))}
               </div>
            </div>
         </div>
 
-        <div className="w-[500px] border-l border-white/5 bg-[#0e0e0e] flex flex-col shrink-0">
-           <div className="flex border-b border-white/5 bg-[#121212] h-12 shrink-0">
-              <button onClick={()=>setActiveTab('editor')} className={cn("flex-1 text-[9px] font-black tracking-widest uppercase flex items-center justify-center gap-2", activeTab==='editor'?"border-b border-cyan-500 text-white":"text-gray-600 opacity-40")}><Layers size={12}/> Editor</button>
-              <button onClick={()=>setActiveTab('yaml')} className={cn("flex-1 text-[9px] font-black tracking-widest uppercase flex items-center justify-center gap-2", activeTab==='yaml'?"border-b border-cyan-500 text-white":"text-gray-600 opacity-40")}><Code size={12}/> YAML Flow</button>
+        <div className="w-[550px] border-l border-white/[0.03] bg-[#080808] flex flex-col shrink-0">
+           <div className="flex bg-[#111] h-12 shrink-0 border-b border-white/[0.03]">
+              <button onClick={()=>setActiveTab('editor')} className={cn("flex-1 text-[10px] font-black tracking-widest transition-all uppercase flex items-center justify-center gap-2", activeTab==='editor'?"bg-[#080808] text-cyan-500 border-t-2 border-cyan-500 shadow-2xl":"text-gray-600 opacity-40 hover:opacity-80 hover:bg-white/[0.01]")}><Layers size={14}/> Job Queue</button>
+              <button onClick={()=>setActiveTab('yaml')} className={cn("flex-1 text-[10px] font-black tracking-widest transition-all uppercase flex items-center justify-center gap-2", activeTab==='yaml'?"bg-[#080808] text-cyan-500 border-t-2 border-cyan-500 shadow-2xl":"text-gray-600 opacity-40 hover:opacity-80 hover:bg-white/[0.01]")}><Code size={14}/> Flow YAML</button>
            </div>
-           
-           <div className="flex-1 flex flex-col overflow-hidden relative">
+           <div className="flex-1 flex flex-col overflow-hidden p-4">
               {activeTab === 'editor' ? (
-                 <div className="flex-1 overflow-y-auto p-6 space-y-8 animate-in fade-in duration-300">
-                    <div className="space-y-4"><h4 className="text-[10px] font-black text-gray-600 uppercase tracking-widest text-center">Job Queue</h4>
-                    <div className="space-y-2">
-                       {!jobs.length && <div className="text-center py-10 border border-dashed border-white/5 rounded-2xl opacity-10 text-sm italic uppercase tracking-tighter">Queue Empty</div>}
-                       {jobs.map((j, i) => {
+                 <div className="flex-1 overflow-y-auto space-y-6 custom-scrollbar animate-in fade-in duration-300 px-2">
+                    <div className="space-y-3">
+                       {!jobs.length ? <div className="text-center py-20 border-2 border-dashed border-white/[0.02] rounded-[2rem] opacity-10 text-xs italic uppercase">Queue Empty</div> : jobs.map((j, i) => {
                          const st = workflow?.jobStatuses[i], isR = st?.status === 'processing', isD = st?.status === 'completed' || st?.status === 'job_done' || workflow?.status === 'finished'
                          return (
-                          <div key={j.id} onClick={()=>setActiveJobId(j.id)} className={cn("group p-4 rounded-xl border transition-all cursor-pointer relative overflow-hidden", activeJobId===j.id?"bg-cyan-500/5 border-cyan-500/30 shadow-lg":"bg-black/40 border-white/5 hover:border-white/10")}>
-                             <div className="flex justify-between items-center relative z-10">
-                                <div className="flex items-center gap-3">
-                                   {isD ? <CheckCircle2 size={12} className="text-green-500"/> : isR ? <Loader2 size={12} className="text-cyan-500 animate-spin"/> : <span className={cn("text-[9px] font-black w-6 h-6 flex items-center justify-center rounded-lg", j.command==='split'?"bg-cyan-900/50 text-cyan-400":"bg-indigo-900/50 text-indigo-400")}>{i+1}</span>}
-                                   <span className="text-xs font-black text-white uppercase tracking-tight">{j.name}</span>
-                                </div>
-                                <button onClick={e=>{e.stopPropagation();setJobs(jobs.filter(x=>x.id!==j.id))}} className="opacity-0 group-hover:opacity-100 text-gray-600 hover:text-red-500 transition-opacity"><Trash2 size={16}/></button>
-                             </div>
+                          <div key={j.id} onClick={()=>setActiveJobId(j.id)} className={cn("group p-5 rounded-2xl border transition-all cursor-pointer relative overflow-hidden", activeJobId===j.id?"bg-cyan-500/[0.04] border-cyan-500/30 shadow-2xl":"bg-white/[0.01] border-white/[0.03] hover:border-white/[0.08]")}>
+                             <div className="flex justify-between items-center relative z-10"><div className="flex items-center gap-4">{isD ? <CheckCircle2 size={14} className="text-green-500"/> : isR ? <Loader2 size={14} className="text-cyan-500 animate-spin"/> : <div className={cn("w-6 h-6 flex items-center justify-center rounded-md font-black text-[9px] shadow-2xl", j.command==='split'?"bg-cyan-950 text-cyan-400":"bg-indigo-950 text-indigo-400")}>{i+1}</div>}<span className="text-xs font-black text-white uppercase tracking-tighter">{j.name}</span></div><button onClick={e=>{e.stopPropagation();setJobs(jobs.filter(x=>x.id!==j.id))}} className="opacity-0 group-hover:opacity-100 text-gray-700 hover:text-red-500 transition-opacity p-1"><X size={16}/></button></div>
                              {isR && <div className="absolute bottom-0 left-0 h-[2px] bg-cyan-500 transition-all duration-300" style={{ width: `${Math.round((st.completed / st.total) * 100)}%` }} />}
                           </div>
                          )
                        })}
-                    </div></div>
+                    </div>
                     {activeJob && (
-                      <div className="bg-[#141414] p-6 rounded-2xl border border-white/10 space-y-6 shadow-2xl animate-in fade-in slide-in-from-right-2">
-                         <div className="flex justify-between items-center border-b border-white/5 pb-4"><h4 className="text-[10px] font-black text-cyan-500 uppercase tracking-widest flex items-center gap-2"><Settings2 size={12}/> Properties</h4></div>
-                         <div className="space-y-5 text-[9px] uppercase font-black text-gray-500">
-                            <div className="space-y-1.5"><label>Name</label><input className="w-full bg-black border border-white/5 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-cyan-500/40 font-normal" value={activeJob.name} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,name:e.target.value}:x))} /></div>
+                      <div className="bg-white/[0.02] p-7 rounded-[2rem] border border-white/[0.05] space-y-7 shadow-2xl animate-in slide-in-from-right-4">
+                         <div className="flex justify-between items-center border-b border-white/[0.03] pb-4"><h4 className="text-[10px] font-black text-cyan-500 uppercase tracking-widest flex items-center gap-2"><Settings2 size={14}/> Properties</h4><span className="text-[9px] text-gray-700 font-mono uppercase">{activeJob.command}</span></div>
+                         <div className="space-y-6 text-[9px] uppercase font-black text-gray-500 tracking-wider">
+                            <div className="space-y-2"><label>Label</label><input className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2.5 text-xs text-white outline-none focus:border-cyan-500/30 font-normal" value={activeJob.name || ''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,name:e.target.value}:x))} /></div>
                             {activeJob.command==='split' && (
-                               <div className="grid grid-cols-2 gap-4 border-t border-white/5 pt-4">
-                                  <div className="space-y-1.5"><label className="text-cyan-600 tracking-tighter">In Point</label><div className="flex gap-1"><input className="flex-1 bg-black border border-white/5 rounded px-2 py-1.5 text-[10px] font-mono text-cyan-400" value={activeJob.setting.start} readOnly/><button onClick={()=>seekTo(parseTimeToSeconds(activeJob.setting.start))} className="p-1.5 bg-white/5 rounded text-cyan-500"><LocateFixed size={12}/></button><button onClick={()=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,start:formatTime(currentTime)}}:x))} className="p-1.5 bg-white/5 rounded"><Clock size={12}/></button></div></div>
-                                  <div className="space-y-1.5"><label className="text-red-600 tracking-tighter">Out Point</label><div className="flex gap-1"><input className="flex-1 bg-black border border-white/5 rounded px-2 py-1.5 text-[10px] font-mono text-red-400" value={activeJob.setting.end} readOnly/><button onClick={()=>seekTo(parseTimeToSeconds(activeJob.setting.end))} className="p-1.5 bg-white/5 rounded text-red-500"><LocateFixed size={12}/></button><button onClick={()=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,end:formatTime(currentTime)}}:x))} className="p-1.5 bg-white/5 rounded"><Clock size={12}/></button></div></div>
+                               <div className="grid grid-cols-2 gap-5 border-t border-white/[0.03] pt-6">
+                                  <div className="space-y-2"><label className="text-cyan-600">In Point</label><div className="flex gap-1.5"><input className="flex-1 bg-black border border-white/[0.05] rounded-lg px-3 py-2 text-[11px] font-mono text-cyan-400 outline-none focus:border-cyan-500/30" value={activeJob.setting.start || ''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,start:e.target.value}}:x))}/><button onClick={()=>seekTo(parseTimeToSeconds(activeJob.setting.start))} className="p-2 bg-white/[0.03] rounded-lg hover:bg-white/[0.08] text-cyan-500"><LocateFixed size={14}/></button><button onClick={()=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,start:formatTime(currentTime)}}:x))} className="p-2 bg-white/[0.03] rounded-lg hover:bg-white/[0.08] text-white/50"><Clock size={14}/></button></div></div>
+                                  <div className="space-y-2"><label className="text-red-600">Out Point</label><div className="flex gap-1.5"><input className="flex-1 bg-black border border-white/[0.05] rounded-lg px-3 py-2 text-[11px] font-mono text-red-400 outline-none focus:border-red-500/30" value={activeJob.setting.end || ''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,end:e.target.value}}:x))}/><button onClick={()=>seekTo(parseTimeToSeconds(activeJob.setting.end))} className="p-2 bg-white/[0.03] rounded-lg hover:bg-white/[0.08] text-red-500"><LocateFixed size={14}/></button><button onClick={()=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,end:formatTime(currentTime)}}:x))} className="p-2 bg-white/[0.03] rounded-lg hover:bg-white/[0.08] text-white/50"><Clock size={14}/></button></div></div>
                                </div>
                             )}
-                            <div className="grid grid-cols-2 gap-4"><div className="space-y-1.5"><label>Codec</label><select className="w-full bg-black border border-white/5 rounded px-3 py-2 text-xs text-white outline-none font-normal" value={activeJob.setting.video_codec||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,video_codec:e.target.value||undefined}}:x))}><option value="">Inherit</option><option value="copy">COPY</option><option value="libx264">H.264</option><option value="h264_nvenc">NVENC</option></select></div><div className="space-y-1.5"><label>Bitrate</label><input className="w-full bg-black border border-white/5 rounded px-3 py-2 text-xs text-white outline-none font-mono font-normal" placeholder="e.g. 8M" value={activeJob.setting.video_bitrate||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,video_bitrate:e.target.value||undefined}}:x))} /></div></div>
-                            <div className="space-y-1.5"><label>Output Path Override</label><input className="w-full bg-black border border-white/5 rounded px-3 py-2 text-xs text-white outline-none font-mono font-normal" placeholder="Relative path..." value={activeJob.setting.output_path || ''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,output_path:e.target.value||undefined}}:x))} /></div>
+                            <div className="grid grid-cols-2 gap-5 border-t border-white/[0.03] pt-6">
+                               <div className="space-y-2"><label>Codec</label><select className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2.5 text-xs text-white outline-none font-bold" value={activeJob.setting.video_codec||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,video_codec:e.target.value||undefined}}:x))}><option value="">Inherit</option><option value="copy">COPY</option><option value="libx264">H.264</option><option value="h264_nvenc">NVENC</option></select></div>
+                               <div className="space-y-2"><label>Bitrate</label><input className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2.5 text-xs text-white outline-none font-mono" placeholder="e.g. 12M" value={activeJob.setting.video_bitrate||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,video_bitrate:e.target.value||undefined}}:x))} /></div>
+                            </div>
                          </div>
                       </div>
                     )}
                  </div>
               ) : (
-                 <div className="flex-1 flex flex-col bg-black animate-in fade-in duration-300">
-                    <div className="px-6 py-3 border-b border-white/5 flex justify-between items-center bg-[#111]"><span className="text-[9px] font-black text-gray-600 uppercase tracking-widest flex items-center gap-2"><History size={10}/> FLOW SOURCE</span><button onClick={()=>navigator.clipboard.writeText(yamlText)} className="text-[9px] font-black text-cyan-600 hover:text-white uppercase transition-colors">Copy</button></div>
-                    <textarea className="flex-1 bg-transparent p-8 text-[11px] font-mono text-green-500/60 outline-none resize-none leading-relaxed custom-scrollbar" value={yamlText} onChange={e=>handleYamlChange(e.target.value)} spellCheck={false} placeholder="Paste flow.yml here to restore..."/>
+                 <div className="flex-1 flex flex-col bg-black/40 rounded-3xl overflow-hidden border border-white/[0.02] animate-in fade-in duration-300">
+                    <div className="px-6 py-3 border-b border-white/[0.03] flex justify-between items-center bg-white/[0.01]"><span className="text-[10px] font-black text-gray-500 uppercase tracking-widest flex items-center gap-2"><HistoryIcon size={12}/> Pipeline YAML Source</span><button onClick={()=>navigator.clipboard.writeText(yamlText)} className="text-[10px] font-black text-cyan-600 hover:text-white uppercase tracking-widest">Copy</button></div>
+                    <textarea className="flex-1 bg-transparent p-8 text-xs font-mono text-green-500/40 outline-none resize-none leading-relaxed custom-scrollbar" value={yamlText} onChange={e=>handleYamlChange(e.target.value)} spellCheck={false} placeholder="Paste flow.yml here..."/>
                  </div>
               )}
            </div>
         </div>
       </div>
 
-      {/* MODAL: Execution Progress */}
       {isModalOpen && workflow && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
-           <div className="w-[600px] bg-[#0c0c0c] border border-white/10 rounded-[2.5rem] shadow-2xl flex flex-col overflow-hidden">
-              <div className="p-8 border-b border-white/5 flex justify-between items-center bg-[#111]">
-                 <div className="flex flex-col gap-1">
-                    <h3 className="text-sm font-black uppercase tracking-[0.3em] text-white flex items-center gap-2"><CircleDot size={12} className="text-cyan-500 animate-pulse"/> Workflow Execution</h3>
-                    <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">{workflow.status === 'finished' ? 'Success' : workflow.status === 'preparing' ? 'Preparing backend...' : 'Running workflow steps...'}</p>
-                 </div>
-                 <button onClick={() => { setIsModalOpen(false); setWorkflow(null); }} className="p-3 bg-white/5 rounded-full hover:bg-white/10 transition-colors"><X size={20}/></button>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[#050505]/90 backdrop-blur-2xl animate-in fade-in duration-500">
+           <div className="w-[650px] bg-[#0c0c0c] border border-white/[0.05] rounded-[3rem] shadow-2xl flex flex-col overflow-hidden">
+              <div className="p-10 border-b border-white/[0.03] flex justify-between items-center bg-white/[0.01]"><div className="flex flex-col gap-1.5"><h3 className="text-base font-black uppercase tracking-[0.4em] text-white flex items-center gap-3"><CircleDot size={14} className="text-cyan-500 animate-pulse"/> Pipeline Execution</h3><p className="text-[10px] font-bold text-gray-600 uppercase tracking-widest">{workflow.status === 'finished' ? 'Process Finalized' : 'Executing Workflow...'}</p></div><button onClick={()=>{setIsModalOpen(false);setWorkflow(null)}} className="p-4 bg-white/[0.03] rounded-full hover:bg-white/[0.08] transition-colors"><X size={24}/></button></div>
+              <div className="p-10 flex-1 overflow-y-auto max-h-[500px] space-y-6 custom-scrollbar">
+                 <div className="bg-black/60 p-7 rounded-[2rem] border border-white/[0.03] flex flex-col gap-4 shadow-inner"><div className="flex justify-between items-end"><span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Total Progress</span><span className="text-2xl font-black text-white font-mono">{Math.round((workflow.overall_completed / workflow.overall_total) * 100)}%</span></div><div className="h-2 bg-white/[0.02] rounded-full overflow-hidden shadow-inner"><div className="h-full bg-gradient-to-r from-cyan-600 to-cyan-400 transition-all duration-700" style={{ width: `${Math.round((workflow.overall_completed / workflow.overall_total) * 100)}%` }} /></div></div>
+                 <div className="space-y-2.5">{jobs.map((j,i)=>{
+                       const st = workflow.jobStatuses[i], isR = st?.status === 'processing', isD = st?.status === 'completed' || st?.status === 'job_done' || workflow.status === 'finished', isF = st?.status === 'failed' || st?.status === 'error'
+                       return (<div key={j.id} className={cn("p-5 rounded-2xl border transition-all flex flex-col gap-3", isR ? "bg-cyan-500/[0.03] border-cyan-500/20" : isD ? "bg-green-500/[0.02] border-green-500/10 opacity-40" : "bg-white/[0.01] border-transparent opacity-20")}><div className="flex justify-between items-center px-1"><div className="flex items-center gap-4">{isD ? <CheckCircle2 size={16} className="text-green-500"/> : isF ? <AlertCircle size={16} className="text-red-500"/> : isR ? <Loader2 size={16} className="text-cyan-500 animate-spin"/> : <div className="w-4 h-4 border border-white/10 rounded-full"/>}<span className="text-xs font-black text-white uppercase tracking-tight">{j.name}</span></div>{isR && <span className="text-[10px] font-black font-mono text-cyan-400">{Math.round((st.completed/st.total)*100)}%</span>}</div>{isR && <div className="h-1 bg-white/[0.03] rounded-full overflow-hidden"><div className="h-full bg-cyan-500/60 transition-all duration-500" style={{ width: `${Math.round((st.completed/st.total)*100)}%` }} /></div>}</div>)
+                    })}</div>
               </div>
-              <div className="p-8 flex-1 overflow-y-auto max-h-[450px] space-y-4 custom-scrollbar">
-                 <div className="bg-black/40 p-5 rounded-2xl border border-white/5 flex flex-col gap-3">
-                    <div className="flex justify-between items-end">
-                       <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Total Progress</span>
-                       <span className="text-lg font-black text-white font-mono">{Math.round((workflow.overall_completed / (workflow.overall_total || 1)) * 100)}%</span>
-                    </div>
-                    <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
-                       <div className="h-full bg-cyan-500 shadow-[0_0_15px_rgba(6,182,212,0.4)] transition-all duration-700" style={{ width: `${Math.round((workflow.overall_completed / (workflow.overall_total || 1)) * 100)}%` }} />
-                    </div>
-                 </div>
-                 <div className="space-y-2">
-                    {jobs.map((job, idx) => {
-                       const st = workflow.jobStatuses[idx], isR = st?.status === 'processing', isD = st?.status === 'completed' || st?.status === 'job_done' || workflow.status === 'finished', isF = st?.status === 'failed' || st?.status === 'error'
-                       const jobP = st ? Math.round((st.completed / (st.total || 1)) * 100) : 0
-                       return (
-                         <div key={job.id} className={cn("p-4 rounded-xl border flex flex-col gap-2 transition-all", isR ? "bg-cyan-500/5 border-cyan-500/20" : isD ? "bg-green-500/5 border-green-500/20 opacity-50" : "bg-white/5 border-transparent opacity-20")}>
-                            <div className="flex justify-between items-center">
-                               <div className="flex items-center gap-3">
-                                  {isD ? <CheckCircle2 size={14} className="text-green-500"/> : isF ? <AlertCircle size={14} className="text-red-500"/> : isR ? <Loader2 size={14} className="text-cyan-500 animate-spin"/> : <div className="w-3.5 h-3.5 border border-white/20 rounded-full"/>}
-                                  <span className="text-[11px] font-black text-white">{job.name}</span>
-                               </div>
-                               {isR && <span className="text-[9px] font-mono text-cyan-400">{jobP}%</span>}
-                            </div>
-                            {isR && <div className="h-1 bg-white/5 rounded-full overflow-hidden"><div className="h-full bg-cyan-500 transition-all duration-500" style={{ width: `${jobP}%` }} /></div>}
-                         </div>
-                       )
-                    })}
-                 </div>
-              </div>
-              <div className="p-8 bg-[#111] border-t border-white/5 flex justify-center">
-                 <button onClick={() => { setIsModalOpen(false); setWorkflow(null); }} className={cn("px-12 py-3 rounded-full font-black text-xs tracking-widest transition-all shadow-lg", workflow.status === 'finished' ? "bg-green-600 hover:bg-green-500 text-white shadow-green-900/20" : "bg-white/5 text-gray-500 cursor-not-allowed")}>{workflow.status === 'finished' ? 'CLOSE' : 'EXECUTING...'}</button>
-              </div>
+              <div className="p-10 bg-white/[0.01] border-t border-white/[0.03] flex justify-center"><button onClick={()=>{setIsModalOpen(false);setWorkflow(null)}} className={cn("px-16 py-4 rounded-full font-black text-[11px] tracking-widest transition-all shadow-lg uppercase", workflow.status === 'finished' ? "bg-green-600 hover:bg-green-500 text-white shadow-green-900/40" : "bg-white/[0.03] text-gray-600 cursor-not-allowed")}>{workflow.status === 'finished' ? 'DONE' : 'EXECUTING...'}</button></div>
            </div>
         </div>
       )}
