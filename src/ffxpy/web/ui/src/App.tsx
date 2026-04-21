@@ -350,70 +350,83 @@ export default function App() {
                     <button onClick={() => stepKeyframe('next')} disabled={isSubmitting} className="p-3 hover:bg-white/5 rounded-xl text-cyan-500 disabled:opacity-20 transition-colors shadow-inner"><ChevronRight size={28}/></button>
                  </div>
                  <div className="flex gap-3">
-                    <button onClick={() => addJob('split')} className="bg-white/5 hover:bg-cyan-500 hover:text-black border border-white/10 text-white font-black text-[11px] px-10 py-3.5 rounded-2xl flex items-center gap-2 transition-all shadow-xl active:scale-95 group"><Plus size={18} className="group-hover:rotate-90 transition-transform"/> ADD SPLIT JOB</button>
-                    <button onClick={() => addJob('merge')} className="bg-white/5 hover:bg-indigo-500 hover:text-white border border-white/10 text-white font-black text-[11px] px-10 py-3.5 rounded-2xl flex items-center gap-2 transition-all shadow-xl active:scale-95 group"><Combine size={18}/> ADD MERGE JOB</button>
+                   {/* Buttons removed from here */}
                  </div>
-              </div>
-              <div className="flex gap-[1px] opacity-10 px-1">
-                {videoInfo && keyframes.length < 2000 && keyframes.map(k => (<div key={k} className="h-1 bg-cyan-500 rounded-full flex-1" />))}
-              </div>
-           </div>
-        </div>
+                 </div>
+                 <div className="flex gap-[1px] opacity-10 px-1">
+                 {videoInfo && keyframes.length < 2000 && keyframes.map(k => (<div key={k} className="h-1 bg-cyan-500 rounded-full flex-1" />))}
+                 </div>
+                 </div>
+                 </div>
 
-        <div className="w-[550px] border-l border-white/[0.03] bg-[#080808] flex flex-col shrink-0">
+                 <div className="w-[550px] border-l border-white/[0.03] bg-[#080808] flex flex-col shrink-0">
            <div className="flex bg-[#111] h-12 shrink-0 border-b border-white/[0.03]">
               <button onClick={()=>setActiveTab('editor')} className={cn("flex-1 text-[10px] font-black tracking-widest transition-all uppercase flex items-center justify-center gap-2", activeTab==='editor'?"bg-[#080808] text-cyan-500 border-t-2 border-cyan-500 shadow-2xl":"text-gray-600 opacity-40 hover:opacity-80 hover:bg-white/[0.01]")}><Layers size={14}/> Job Queue</button>
               <button onClick={()=>setActiveTab('yaml')} className={cn("flex-1 text-[10px] font-black tracking-widest transition-all uppercase flex items-center justify-center gap-2", activeTab==='yaml'?"bg-[#080808] text-cyan-500 border-t-2 border-cyan-500 shadow-2xl":"text-gray-600 opacity-40 hover:opacity-80 hover:bg-white/[0.01]")}><Code size={14}/> Flow Definition</button>
            </div>
+
            <div className="flex-1 flex flex-col overflow-hidden p-4">
               {activeTab === 'editor' ? (
                  <div className="flex-1 overflow-y-auto space-y-6 custom-scrollbar animate-in fade-in duration-300 px-2">
                     <div className="space-y-3">
                        {jobs.length === 0 ? <div className="text-center py-20 border-2 border-dashed border-white/[0.02] rounded-[2rem] opacity-10 text-xs italic uppercase">Queue is empty</div> : jobs.map((j, i) => {
                          const st = workflow?.jobStatuses[i], isR = st?.status === 'processing', isD = st?.status === 'completed' || st?.status === 'job_done' || workflow?.status === 'finished'
+                         const isActive = activeJobId === j.id
                          return (
-                          <div 
-                            key={j.id} 
-                            onClick={()=>setActiveJobId(j.id)} 
-                            draggable
-                            onDragStart={() => handleDragStart(i)}
-                            onDragEnter={() => handleDragEnter(i)}
-                            onDragEnd={handleDragEnd}
-                            onDragOver={(e) => e.preventDefault()}
-                            className={cn(
-                              "group p-5 rounded-2xl border transition-all cursor-pointer relative overflow-hidden flex items-center gap-4", 
-                              activeJobId===j.id?"bg-cyan-500/[0.04] border-cyan-500/30 shadow-2xl":"bg-white/[0.01] border-white/[0.03] hover:border-white/[0.08]",
-                              dragIdx === i && "opacity-20 border-cyan-500 border-dashed"
+                          <div key={j.id} className="space-y-3">
+                            <div 
+                              onClick={()=>setActiveJobId(j.id)} 
+                              draggable
+                              onDragStart={() => handleDragStart(i)}
+                              onDragEnter={() => handleDragEnter(i)}
+                              onDragEnd={handleDragEnd}
+                              onDragOver={(e) => e.preventDefault()}
+                              className={cn(
+                                "group p-5 rounded-2xl border transition-all cursor-pointer relative overflow-hidden flex items-center gap-4", 
+                                isActive?"bg-cyan-500/[0.04] border-cyan-500/30 shadow-2xl":"bg-white/[0.01] border-white/[0.03] hover:border-white/[0.08]",
+                                dragIdx === i && "opacity-20 border-cyan-500 border-dashed"
+                              )}
+                            >
+                               <div className="text-gray-700 cursor-grab active:cursor-grabbing hover:text-cyan-500 transition-colors">
+                                 <GripVertical size={16} />
+                               </div>
+                               <div className="flex-1 flex justify-between items-center relative z-10"><div className="flex items-center gap-4">{isD ? <CheckCircle2 size={14} className="text-green-500"/> : isR ? <Loader2 size={14} className="text-cyan-500 animate-spin"/> : <div className={cn("w-6 h-6 flex items-center justify-center rounded-md font-black text-[9px] shadow-2xl", j.command==='split'?"bg-cyan-950 text-cyan-400":"bg-indigo-950 text-indigo-400")}>{i+1}</div>}<span className="text-xs font-black text-white uppercase tracking-tighter">{j.name}</span></div><button onClick={e=>{e.stopPropagation();setJobs(jobs.filter(x=>x.id!==j.id))}} className="opacity-0 group-hover:opacity-100 text-gray-700 hover:text-red-500 transition-opacity p-1"><X size={16}/></button></div>
+                               {isR && <div className="absolute bottom-0 left-0 h-[2px] bg-cyan-500 transition-all duration-300" style={{ width: `${Math.round((st.completed / st.total) * 100)}%` }} />}
+                            </div>
+
+                            {isActive && activeJob && (
+                              <div className="bg-white/[0.02] p-6 rounded-2xl border border-white/[0.05] space-y-6 shadow-2xl animate-in fade-in slide-in-from-top-2 duration-300 mx-2">
+                                <div className="flex justify-between items-center border-b border-white/[0.03] pb-3"><h4 className="text-[9px] font-black text-cyan-500 uppercase tracking-widest flex items-center gap-2"><Settings2 size={12}/> Properties</h4></div>
+                                <div className="space-y-5 text-[9px] uppercase font-black text-gray-500 tracking-wider">
+                                    <div className="space-y-2"><label>Task Label</label><input className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2 text-xs text-white outline-none focus:border-cyan-500/30 font-normal transition-colors" value={activeJob.name} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,name:e.target.value}:x))} /></div>
+                                    {activeJob.command==='split' && (
+                                      <div className="grid grid-cols-2 gap-4 border-t border-white/[0.03] pt-5">
+                                          <div className="space-y-2"><label className="text-cyan-600">In Point</label><div className="flex gap-1.5"><input className="flex-1 bg-black border border-white/[0.05] rounded-lg px-3 py-1.5 text-[11px] font-mono text-cyan-400 outline-none focus:border-cyan-500/30" value={activeJob.setting.start || ''} onChange={e => setJobs(prev => prev.map(x => x.id === activeJob.id ? {...x, setting: {...x.setting, start: e.target.value}} : x))}/><button onClick={()=>seekTo(parseTimeToSeconds(activeJob.setting.start))} className="p-1.5 bg-white/[0.03] rounded-lg hover:bg-white/[0.08] text-cyan-500 transition-colors"><LocateFixed size={12}/></button><button onClick={()=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,start:formatTime(currentTime)}}:x))} className="p-1.5 bg-white/[0.03] rounded-lg hover:bg-white/[0.08] text-white/50"><Clock size={12}/></button></div></div>
+                                          <div className="space-y-2"><label className="text-red-600">Out Point</label><div className="flex gap-1.5"><input className="flex-1 bg-black border border-white/[0.05] rounded-lg px-3 py-1.5 text-[11px] font-mono text-red-400 outline-none focus:border-red-500/30" value={activeJob.setting.end || ''} onChange={e => setJobs(prev => prev.map(x => x.id === activeJob.id ? {...x, setting: {...x.setting, end: e.target.value}} : x))}/><button onClick={()=>seekTo(parseTimeToSeconds(activeJob.setting.end))} className="p-1.5 bg-white/[0.03] rounded-lg hover:bg-white/[0.08] text-red-500 transition-colors"><LocateFixed size={12}/></button><button onClick={()=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,end:formatTime(currentTime)}}:x))} className="p-1.5 bg-white/[0.03] rounded-lg hover:bg-white/[0.08] text-white/50"><Clock size={12}/></button></div></div>
+                                      </div>
+                                    )}
+                                    <div className="grid grid-cols-2 gap-4 border-t border-white/[0.03] pt-5">
+                                      <div className="space-y-2"><label>Video Codec</label><select className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2 text-xs text-white outline-none font-bold appearance-none cursor-pointer" value={activeJob.setting.video_codec||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,video_codec:e.target.value||undefined}}:x))}><option value="">Inherit</option><option value="copy">COPY</option><option value="libx264">H.264</option><option value="h264_nvenc">NVENC</option></select></div>
+                                      <div className="space-y-2"><label>Target Bitrate</label><input className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2 text-xs text-white outline-none font-mono font-normal" placeholder="e.g. 12M" value={activeJob.setting.video_bitrate||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,video_bitrate:e.target.value||undefined}}:x))} /></div>
+                                    </div>
+                                    <div className="space-y-2 border-t border-white/[0.03] pt-5"><label>Output Directory Override</label><input className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2 text-xs text-white outline-none focus:border-cyan-500/30 font-normal transition-colors" placeholder="e.g. ./output" value={activeJob.setting.output_dir||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,output_dir:e.target.value||undefined}}:x))} /></div>
+                                </div>
+                              </div>
                             )}
-                          >
-                             <div className="text-gray-700 cursor-grab active:cursor-grabbing hover:text-cyan-500 transition-colors">
-                               <GripVertical size={16} />
-                             </div>
-                             <div className="flex-1 flex justify-between items-center relative z-10"><div className="flex items-center gap-4">{isD ? <CheckCircle2 size={14} className="text-green-500"/> : isR ? <Loader2 size={14} className="text-cyan-500 animate-spin"/> : <div className={cn("w-6 h-6 flex items-center justify-center rounded-md font-black text-[9px] shadow-2xl", j.command==='split'?"bg-cyan-950 text-cyan-400":"bg-indigo-950 text-indigo-400")}>{i+1}</div>}<span className="text-xs font-black text-white uppercase tracking-tighter">{j.name}</span></div><button onClick={e=>{e.stopPropagation();setJobs(jobs.filter(x=>x.id!==j.id))}} className="opacity-0 group-hover:opacity-100 text-gray-700 hover:text-red-500 transition-opacity p-1"><X size={16}/></button></div>
-                             {isR && <div className="absolute bottom-0 left-0 h-[2px] bg-cyan-500 transition-all duration-300" style={{ width: `${Math.round((st.completed / st.total) * 100)}%` }} />}
                           </div>
                          )
                        })}
+
+                       <div className="relative group">
+                          <div className="p-4 rounded-2xl border-2 border-dashed border-white/[0.03] bg-white/[0.01] flex items-center justify-center gap-3 text-[10px] font-black text-gray-600 uppercase tracking-widest group-hover:border-cyan-500/30 group-hover:bg-cyan-500/[0.02] group-hover:text-cyan-500 transition-all">
+                             <Plus size={16} /> New Job
+                          </div>
+                          <div className="absolute inset-0 flex opacity-0 group-hover:opacity-100 transition-all z-10 overflow-hidden rounded-2xl">
+                             <button onClick={() => addJob('split')} className="flex-1 bg-cyan-600 hover:bg-cyan-500 text-white font-black text-[10px] flex items-center justify-center gap-2 uppercase tracking-tighter"><Plus size={14}/> Add Split</button>
+                             <button onClick={() => addJob('merge')} className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-black text-[10px] flex items-center justify-center gap-2 uppercase tracking-tighter"><Combine size={14}/> Add Merge</button>
+                          </div>
+                       </div>
                     </div>
-                    {activeJob && (
-                      <div className="bg-white/[0.02] p-7 rounded-[2rem] border border-white/[0.05] space-y-7 shadow-2xl animate-in slide-in-from-right-4">
-                         <div className="flex justify-between items-center border-b border-white/[0.03] pb-4"><h4 className="text-[10px] font-black text-cyan-500 uppercase tracking-widest flex items-center gap-2"><Settings2 size={14}/> Properties</h4></div>
-                         <div className="space-y-6 text-[9px] uppercase font-black text-gray-500 tracking-wider">
-                            <div className="space-y-2"><label>Task Label</label><input className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2.5 text-xs text-white outline-none focus:border-cyan-500/30 font-normal transition-colors" value={activeJob.name} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,name:e.target.value}:x))} /></div>
-                            {activeJob.command==='split' && (
-                               <div className="grid grid-cols-2 gap-5 border-t border-white/[0.03] pt-6">
-                                  <div className="space-y-2"><label className="text-cyan-600">In Point</label><div className="flex gap-1.5"><input className="flex-1 bg-black border border-white/[0.05] rounded-lg px-3 py-2 text-[11px] font-mono text-cyan-400 outline-none focus:border-cyan-500/30" value={activeJob.setting.start || ''} onChange={e => setJobs(prev => prev.map(x => x.id === activeJob.id ? {...x, setting: {...x.setting, start: e.target.value}} : x))}/><button onClick={()=>seekTo(parseTimeToSeconds(activeJob.setting.start))} className="p-2 bg-white/[0.03] rounded-lg hover:bg-white/[0.08] text-cyan-500 transition-colors"><LocateFixed size={14}/></button><button onClick={()=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,start:formatTime(currentTime)}}:x))} className="p-2 bg-white/[0.03] rounded-lg hover:bg-white/[0.08] text-white/50"><Clock size={14}/></button></div></div>
-                                  <div className="space-y-2"><label className="text-red-600">Out Point</label><div className="flex gap-1.5"><input className="flex-1 bg-black border border-white/[0.05] rounded-lg px-3 py-2 text-[11px] font-mono text-red-400 outline-none focus:border-red-500/30" value={activeJob.setting.end || ''} onChange={e => setJobs(prev => prev.map(x => x.id === activeJob.id ? {...x, setting: {...x.setting, end: e.target.value}} : x))}/><button onClick={()=>seekTo(parseTimeToSeconds(activeJob.setting.end))} className="p-2 bg-white/[0.03] rounded-lg hover:bg-white/[0.08] text-red-500 transition-colors"><LocateFixed size={14}/></button><button onClick={()=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,end:formatTime(currentTime)}}:x))} className="p-2 bg-white/[0.03] rounded-lg hover:bg-white/[0.08] text-white/50"><Clock size={14}/></button></div></div>
-                               </div>
-                            )}
-                            <div className="grid grid-cols-2 gap-5 border-t border-white/[0.03] pt-6">
-                               <div className="space-y-2"><label>Video Codec</label><select className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2.5 text-xs text-white outline-none font-bold appearance-none cursor-pointer" value={activeJob.setting.video_codec||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,video_codec:e.target.value||undefined}}:x))}><option value="">Inherit</option><option value="copy">COPY</option><option value="libx264">H.264</option><option value="h264_nvenc">NVENC</option></select></div>
-                               <div className="space-y-2"><label>Target Bitrate</label><input className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2.5 text-xs text-white outline-none font-mono font-normal" placeholder="e.g. 12M" value={activeJob.setting.video_bitrate||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,video_bitrate:e.target.value||undefined}}:x))} /></div>
-                            </div>
-                            <div className="space-y-2 border-t border-white/[0.03] pt-6"><label>Output Directory Override</label><input className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2.5 text-xs text-white outline-none focus:border-cyan-500/30 font-normal transition-colors" placeholder="e.g. ./output" value={activeJob.setting.output_dir||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,output_dir:e.target.value||undefined}}:x))} /></div>
-                         </div>
-                      </div>
-                    )}
                  </div>
               ) : (
                  <div className="flex-1 flex flex-col bg-black/40 rounded-3xl overflow-hidden border border-white/[0.02] animate-in fade-in duration-300">
