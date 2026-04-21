@@ -309,7 +309,20 @@ export default function App() {
              <div className="flex flex-col leading-none"><span className="font-black text-white tracking-tighter text-base uppercase">FFXPY</span><span className="text-[9px] font-bold text-cyan-500 uppercase tracking-widest">Workflow Studio</span></div>
            </div>
            <div className="h-6 w-[1px] bg-white/10" />
-           <button onClick={openSettings} className="flex items-center gap-2 text-gray-500 hover:text-cyan-500 transition-colors uppercase font-black text-[9px] tracking-widest"><Settings2 size={14}/> Flow Settings</button>
+           <div className="flex items-center gap-4">
+             <button onClick={openSettings} className="flex items-center gap-2 text-gray-500 hover:text-cyan-500 transition-colors uppercase font-black text-[9px] tracking-widest"><Settings2 size={14}/> Flow Settings</button>
+             <div className="flex items-center gap-3 px-4 py-1.5 bg-white/[0.02] border border-white/[0.05] rounded-full">
+               <div className="flex items-center gap-2 border-r border-white/5 pr-3">
+                 <span className="text-[10px] font-black text-gray-600 uppercase tracking-tighter">Video</span>
+                 <span className="text-[11px] font-bold text-cyan-500/80 font-mono uppercase">{globalSetting.video_codec}</span>
+                 {globalSetting.video_bitrate && <span className="text-[11px] font-bold text-gray-400 font-mono">@{globalSetting.video_bitrate}</span>}
+               </div>
+               <div className="flex items-center gap-2">
+                 <span className="text-[10px] font-black text-gray-600 uppercase tracking-tighter">Audio</span>
+                 <span className="text-[11px] font-bold text-indigo-400/80 font-mono uppercase">{globalSetting.audio_codec}</span>
+               </div>
+             </div>
+           </div>
         </div>
         <button onClick={handleExecute} disabled={isSubmitting||!jobs.length} className="bg-cyan-600 hover:bg-cyan-400 text-white font-black text-[10px] px-6 py-2 rounded-full shadow-lg transition-all flex items-center gap-2 tracking-widest uppercase">{isSubmitting ? <Loader2 className="animate-spin" size={14}/> : <PlayCircle size={14}/>} Run Flow</button>
       </nav>
