@@ -439,7 +439,7 @@ export default function App() {
                          return (
                           <div key={j.id} className="space-y-3">
                             <div 
-                              onClick={()=>setActiveJobId(j.id)} 
+                              onClick={()=>setActiveJobId(prev => prev === j.id ? null : j.id)} 
                               draggable
                               onDragStart={() => handleDragStart(i)}
                               onDragEnter={() => handleDragEnter(i)}
