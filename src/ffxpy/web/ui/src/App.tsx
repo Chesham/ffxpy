@@ -342,18 +342,69 @@ export default function App() {
                 }}
                 controls /> : <div className="w-full h-full flex flex-col items-center justify-center opacity-[0.03]"><Film size={180} /></div>}
            </div>
-           <div className="bg-[#0e0e0e]/80 backdrop-blur-md p-5 rounded-3xl border border-white/[0.05] space-y-5 shadow-2xl shrink-0">
-              <div className="flex justify-between items-center px-2">
-                 <div className="flex items-center gap-4 bg-white/[0.02] p-1 rounded-2xl border border-white/[0.03]">
-                    <button onClick={() => stepKeyframe('prev')} disabled={isSubmitting} className="p-3 hover:bg-white/5 rounded-xl text-cyan-500 disabled:opacity-20 transition-colors shadow-inner"><ChevronLeft size={28}/></button>
-                    <div className="flex flex-col items-center px-6 min-w-[180px] border-x border-white/[0.03]"><span className="text-[9px] font-black text-gray-600 uppercase tracking-[0.3em] mb-1">Timecode Position</span><input className="bg-transparent border-none outline-none font-mono text-2xl text-white font-black tracking-tight text-center w-full selection:bg-cyan-500/30" value={editTime} onFocus={()=>setIsTyping(true)} onBlur={()=>setIsTyping(false)} onChange={e=>setEditTime(e.target.value)} onKeyDown={e=>e.key==='Enter'&&seekTo(parseTimeToSeconds(editTime))}/></div>
-                    <button onClick={() => stepKeyframe('next')} disabled={isSubmitting} className="p-3 hover:bg-white/5 rounded-xl text-cyan-500 disabled:opacity-20 transition-colors shadow-inner"><ChevronRight size={28}/></button>
+           <div className="bg-[#0e0e0e]/80 backdrop-blur-md p-5 rounded-3xl border border-white/[0.05] shadow-2xl shrink-0">
+              <div className="flex items-center bg-white/[0.02] p-1 rounded-2xl border border-white/[0.03] w-full group/seek">
+                 <button onClick={() => stepKeyframe('prev')} disabled={isSubmitting} className="p-4 hover:bg-white/5 rounded-xl text-cyan-500 disabled:opacity-20 transition-colors shrink-0"><ChevronLeft size={32}/></button>
+                 
+                 <div className="flex-1 flex items-center justify-center gap-6 overflow-hidden px-4 h-16">
+                    {/* Left Keyframes (Prior) */}
+                    <div className="flex items-center gap-3 opacity-20 hover:opacity-100 transition-opacity">
+                      {Object.keys(establishedMap)
+                        .map(Number)
+                        .filter(t => t < currentTime - 0.05)
+                        .sort((a, b) => a - b)
+                        .slice(-2)
+                        .map(t => (
+                          <button key={t} onClick={() => seekTo(t)} className="px-3 py-1.5 rounded-lg font-mono text-[10px] font-bold border border-white/10 hover:border-cyan-500/50 hover:text-cyan-400 transition-all shrink-0">
+                            {formatTime(t)}
+                          </button>
+                        ))}
+                    </div>
+
+                    {/* Center: Current Timecode with Keyframe Magnet Logic */}
+                    {(() => {
+                      const isAtKeyframe = Object.keys(establishedMap).map(Number).some(t => Math.abs(t - currentTime) < 0.05);
+                      return (
+                        <div className={cn(
+                          "relative px-8 py-2 rounded-2xl border transition-all duration-300 flex flex-col items-center",
+                          isAtKeyframe 
+                            ? "bg-cyan-500/10 border-cyan-500/40 shadow-[0_0_30px_rgba(6,182,212,0.2)]" 
+                            : "bg-black/20 border-white/[0.05]"
+                        )}>
+                          <span className={cn("text-[8px] font-black uppercase tracking-[0.3em] mb-1 transition-colors", isAtKeyframe ? "text-cyan-400" : "text-gray-600")}>
+                            {isAtKeyframe ? "✨ Keyframe Locked" : "Position"}
+                          </span>
+                          <input 
+                            className="bg-transparent border-none outline-none font-mono text-2xl text-white font-black tracking-tight text-center w-[180px] selection:bg-cyan-500/30" 
+                            value={editTime} 
+                            onFocus={()=>setIsTyping(true)} 
+                            onBlur={()=>setIsTyping(false)} 
+                            onChange={e=>setEditTime(e.target.value)} 
+                            onKeyDown={e=>e.key==='Enter'&&seekTo(parseTimeToSeconds(editTime))}
+                          />
+                        </div>
+                      );
+                    })()}
+
+                    {/* Right Keyframes (Coming up) */}
+                    <div className="flex items-center gap-3 opacity-20 hover:opacity-100 transition-opacity">
+                      {Object.keys(establishedMap)
+                        .map(Number)
+                        .filter(t => t > currentTime + 0.05)
+                        .sort((a, b) => a - b)
+                        .slice(0, 2)
+                        .map(t => (
+                          <button key={t} onClick={() => seekTo(t)} className="px-3 py-1.5 rounded-lg font-mono text-[10px] font-bold border border-white/10 hover:border-cyan-500/50 hover:text-cyan-400 transition-all shrink-0">
+                            {formatTime(t)}
+                          </button>
+                        ))}
+                    </div>
                  </div>
-                 <div className="flex gap-3">
-                   {/* Buttons removed from here */}
-                 </div>
-                 </div>
-                 <div className="flex gap-[1px] opacity-10 px-1">
+
+                 <button onClick={() => stepKeyframe('next')} disabled={isSubmitting} className="p-4 hover:bg-white/5 rounded-xl text-cyan-500 disabled:opacity-20 transition-colors shrink-0"><ChevronRight size={32}/></button>
+              </div>
+              
+              <div className="flex gap-[1px] opacity-10 px-1 pt-4">
                  {videoInfo && keyframes.length < 2000 && keyframes.map(k => (<div key={k} className="h-1 bg-cyan-500 rounded-full flex-1" />))}
                  </div>
                  </div>
