@@ -196,7 +196,7 @@ export default function App() {
     setIsSubmitting(true)
     try {
       const probeTime = Math.max(0, currentTime)
-      const res = await fetch(`${API_BASE}/api/keyframes?path=${encodeURIComponent(videoPath)}&time=${probeTime}&range_sec=5`)
+      const res = await fetch(`${API_BASE}/api/keyframes?path=${encodeURIComponent(videoPath)}&time=${probeTime}&range_sec=10`)
       const data = await res.json()
       const newPoints: number[] = Array.from(new Set<number>(data.keyframes || [])).sort((a,b)=>a-b)
       
