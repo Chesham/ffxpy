@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { 
-  Loader2, CheckCircle2, Search, Zap, Plus, Trash2, ChevronLeft, ChevronRight, 
-  FileVideo, Settings2, Combine, ArrowRight, Clock, Code, LocateFixed, 
-  History as HistoryIcon, MonitorPlay, Layers, CircleDot, X, AlertCircle, PlayCircle, Film, Boxes
+  Loader2, CheckCircle2, Plus, ChevronLeft, ChevronRight, 
+  Settings2, Combine, Clock, Code, LocateFixed, 
+  History as HistoryIcon, Layers, CircleDot, X, AlertCircle, PlayCircle, Film, Boxes, GripVertical
 } from 'lucide-react'
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
@@ -17,54 +17,127 @@ interface Job { id: string; name: string; command: 'split' | 'merge'; setting: J
 interface JobStatus { status: string; completed: number; total: number; name?: string }
 interface WorkflowState { status: string; overall_completed: number; overall_total: number; total_jobs: number; jobStatuses: Record<number, JobStatus> }
 
+interface GlobalSetting {
+  video_codec: string;
+  audio_codec: string;
+  video_bitrate: string;
+  overwrite: boolean;
+  keep_temp: boolean;
+  skip_existing: boolean;
+  output_dir: string;
+}
+
 export default function App() {
   const [videoPath, setVideoPath] = useState('')
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null)
   const [currentTime, setCurrentTime] = useState(0)
   const [jobs, setJobs] = useState<Job[]>([])
   const [activeJobId, setActiveJobId] = useState<string | null>(null)
-  const [globalSetting, setGlobalSetting] = useState({ video_codec: 'copy', audio_codec: 'copy', overwrite: true, keep_temp: false, skip_existing: false })
+  const [globalSetting, setGlobalSetting] = useState<GlobalSetting>(() => {
+    const saved = localStorage.getItem('ffxpy_global_settings')
+    return saved ? JSON.parse(saved) : { video_codec: 'copy', audio_codec: 'copy', video_bitrate: '', overwrite: true, keep_temp: false, skip_existing: false, output_dir: '' }
+  })
   const [yamlText, setYamlText] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [keyframes, setKeyframes] = useState<number[]>([])
-  const [knownKeyframes, setKnownKeyframes] = useState<number[]>([])
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<'editor' | 'yaml'>('editor')
   const [workflow, setWorkflow] = useState<WorkflowState | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [dragIdx, setDragIdx] = useState<number | null>(null)
+  const [editTime, setEditTime] = useState('')
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [tempVideoPath, setTempVideoPath] = useState('')
+  const [isTyping, setIsTyping] = useState(false)
   
   const videoRef = useRef<HTMLVideoElement>(null)
   const isSyncingFromYaml = useRef(false)
+
+  const handleDragStart = (idx: number) => {
+    setDragIdx(idx)
+  }
+
+  const handleDragEnter = (idx: number) => {
+    if (dragIdx === null || dragIdx === idx) return
+    const newJobs = [...jobs]
+    const item = newJobs.splice(dragIdx, 1)[0]
+    newJobs.splice(idx, 0, item)
+    setDragIdx(idx)
+    setJobs(newJobs)
+  }
+
+  const handleDragEnd = () => {
+    setDragIdx(null)
+  }
 
   const seekTo = (t: number) => {
     const val = Math.max(0, Math.min(t, videoInfo?.duration_sec || 0)); setCurrentTime(val)
     if (videoRef.current) videoRef.current.currentTime = val
   }
 
-  const handleProbe = async () => {
-    if (!videoPath) return
+  const handleProbe = async (path: string) => {
+    if (!path) return
     setIsSubmitting(true); setError(null)
     try {
-      const res = await fetch(`${API_BASE}/api/probe?path=${encodeURIComponent(videoPath)}`)
+      const res = await fetch(`${API_BASE}/api/probe?path=${encodeURIComponent(path)}`)
       if (!res.ok) throw new Error('Probe failed')
       const d = await res.json(), m = d.duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:([\d.]+)S)?/)
       const ts = (parseInt(m?.[1]||'0')*3600)+(parseInt(m?.[2]||'0')*60)+parseFloat(m?.[3]||'0')
+      
+      // Auto-Reset UI State for new video
+      setJobs([])
+      setActiveJobId(null)
+      setCurrentTime(0)
+      setVideoPath(path)
+      setEstablishedMap({})
+
       setVideoInfo({ ...d, duration_sec: ts })
+      setEditTime(formatTime(0))
       setKeyframes([])
-      setKnownKeyframes([0])
-    } catch (e: any) { setError(e.message) } finally { setIsSubmitting(false) }
+    } catch (e: unknown) { setError(e instanceof Error ? e.message : String(e)) } finally { setIsSubmitting(false) }
+  }
+
+  const openSettings = () => {
+    setTempVideoPath(videoPath)
+    setIsSettingsOpen(true)
+  }
+
+  const applySettings = () => {
+    if (tempVideoPath !== videoPath) {
+      handleProbe(tempVideoPath)
+    }
+    setIsSettingsOpen(false)
   }
 
   useEffect(() => {
+    localStorage.setItem('ffxpy_global_settings', JSON.stringify(globalSetting))
+  }, [globalSetting])
+
+  useEffect(() => {
     if (isSyncingFromYaml.current) return
-    const clean = (o: any) => {
-       const r = { ...o }
+    const clean = (o: Record<string, unknown>) => {
+       const r: Record<string, unknown> = { ...o }
        Object.keys(r).forEach(k => { if (r[k] === '' || r[k] === undefined) delete r[k] })
        return r
     }
     const flowObj = {
-      setting: clean({ ...globalSetting, input_path: videoPath }),
-      jobs: jobs.map(j => ({ command: j.command, name: j.name, setting: clean(j.setting) }))
+      setting: clean({ 
+        video_codec: globalSetting.video_codec,
+        video_bitrate: globalSetting.video_bitrate,
+        audio_codec: globalSetting.audio_codec,
+        overwrite: globalSetting.overwrite,
+        keep_temp: globalSetting.keep_temp,
+        skip_existing: globalSetting.skip_existing,
+        input_path: videoPath 
+      }),
+      jobs: jobs.map(j => {
+        const jobSetting = { ...j.setting }
+        // Only apply global output_dir to merge jobs if not overridden
+        if (j.command === 'merge' && globalSetting.output_dir && !jobSetting.output_dir) {
+          jobSetting.output_dir = globalSetting.output_dir
+        }
+        return { command: j.command, name: j.name, setting: clean(jobSetting) }
+      })
     }
     setYamlText(yaml.dump(flowObj, { indent: 2, skipInvalid: true, noRefs: true }))
   }, [globalSetting, jobs, videoPath])
@@ -73,18 +146,34 @@ export default function App() {
     setYamlText(v)
     try {
       isSyncingFromYaml.current = true
-      const d = yaml.load(v) as any
+      const d = yaml.load(v)
       if (d && typeof d === 'object') {
-        if (d.setting) {
-          if (d.setting.input_path) setVideoPath(d.setting.input_path)
-          const { input_path, ...rest } = d.setting
-          setGlobalSetting(prev => ({ ...prev, ...rest }))
+        const dObj = d as Record<string, unknown>
+        const setting = dObj.setting as Record<string, unknown> | undefined
+        if (setting) {
+          if (typeof setting.input_path === 'string') {
+            setVideoPath(setting.input_path)
+            setTempVideoPath(setting.input_path)
+          }
+          const rest = { ...setting }
+          delete rest.input_path
+          setGlobalSetting((prev: GlobalSetting) => ({ ...prev, ...rest }))
         }
-        if (Array.isArray(d.jobs)) {
-          setJobs(d.jobs.map((j: any) => ({ id: j.id || Math.random().toString(36).substr(2, 9), ...j, setting: j.setting || {} })))
+        const jobsList = dObj.jobs
+        if (Array.isArray(jobsList)) {
+          setJobs(jobsList.map((j: unknown) => {
+            const jobObj = j as Record<string, unknown>
+            return { 
+              id: (jobObj.id as string) || crypto.randomUUID().split('-')[0], 
+              ...jobObj, 
+              setting: (jobObj.setting as JobSetting) || {} 
+            } as Job
+          }))
         }
       }
-    } catch(e) {} finally { isSyncingFromYaml.current = false }
+    } catch {
+      // Ignore parse errors while typing
+    } finally { isSyncingFromYaml.current = false }
   }
 
   // establishedMap stores confirmed neighbors: { [time]: { prev: number, next: number } }
@@ -92,13 +181,12 @@ export default function App() {
 
   const stepKeyframe = async (dir: 'prev' | 'next') => {
     // 1. Check ESTABLISHED RELATIONSHIPS first (Zero Latency)
-    // We use a small epsilon for float comparison
-    const currentKey = currentTime.toFixed(3)
+    // Increase tolerance to 0.01s for browser floating point jitter
+    const currentKey = currentTime.toFixed(2) 
     const established = establishedMap[currentKey]
     const fastTarget = dir === 'prev' ? established?.prev : established?.next
 
     if (fastTarget !== undefined) {
-      console.log(`[DEBUG] Instant jump via established relationship: ${currentKey} -> ${fastTarget.toFixed(3)}`)
       seekTo(fastTarget)
       return 
     }
@@ -115,7 +203,7 @@ export default function App() {
       setEstablishedMap(prev => {
         const nextMap = { ...prev }
         for (let i = 0; i < newPoints.length; i++) {
-          const k = newPoints[i].toFixed(3)
+          const k = newPoints[i].toFixed(2)
           const node = nextMap[k] || {}
           if (i > 0) node.prev = newPoints[i-1]
           if (i < newPoints.length - 1) node.next = newPoints[i+1]
@@ -124,12 +212,12 @@ export default function App() {
         return nextMap
       })
 
-      // 4. Find target in the results
+      // 4. Find target in the results with a bit of buffer
       let target: number | undefined
       if (dir === 'prev') {
-        target = [...newPoints].reverse().find(x => x < currentTime - 0.01)
+        target = [...newPoints].reverse().find(x => x < currentTime - 0.05)
       } else {
-        target = newPoints.find(x => x > currentTime + 0.01)
+        target = newPoints.find(x => x > currentTime + 0.05)
       }
 
       // Final fallback to global rough list
@@ -150,7 +238,7 @@ export default function App() {
   }
 
   const addJob = (type: 'split' | 'merge') => {
-    const id = Math.random().toString(36).substr(2, 9)
+    const id = crypto.randomUUID().split('-')[0]
     const newJob: Job = { id, name: `${type.toUpperCase()} #${jobs.length + 1}`, command: type, setting: type === 'split' ? { start: formatTime(currentTime), end: formatTime(videoInfo?.duration_sec || 0) } : { video_codec: 'copy' } }
     setJobs([...jobs, newJob]); setActiveJobId(id)
   }
@@ -180,7 +268,7 @@ export default function App() {
         if (data.status === 'finished' || data.status === 'failed') es.close()
       }
       es.onerror = () => { es.close(); setIsSubmitting(false); }
-    } catch (e: any) { setError(e.message); setWorkflow(p=>p?{...p, status:'failed'}:null); setIsSubmitting(false); } finally { setIsSubmitting(false) }
+    } catch (e: unknown) { setError(e instanceof Error ? e.message : String(e)); setWorkflow(p=>p?{...p, status:'failed'}:null); setIsSubmitting(false); } finally { setIsSubmitting(false) }
   }
 
   function formatTime(s: number) {
@@ -207,29 +295,44 @@ export default function App() {
              <div className="flex flex-col leading-none"><span className="font-black text-white tracking-tighter text-base uppercase">FFXPY</span><span className="text-[9px] font-bold text-cyan-500 uppercase tracking-widest">Workflow Studio</span></div>
            </div>
            <div className="h-6 w-[1px] bg-white/10" />
-           <div className="flex items-center gap-3">
-              <input className="bg-black/80 border border-white/5 rounded-md px-4 py-1.5 text-[11px] w-[400px] outline-none focus:border-cyan-500/50 font-mono transition-all" placeholder="Video path..." value={videoPath} onChange={e=>setVideoPath(e.target.value)} onKeyDown={e=>e.key==='Enter'&&handleProbe()}/>
-              <button onClick={handleProbe} disabled={isSubmitting} className="bg-white/90 text-black font-black text-[10px] px-4 py-1.5 rounded-md hover:bg-cyan-500 transition-colors uppercase disabled:opacity-50 tracking-widest">Load</button>
-           </div>
-           <div className="h-6 w-[1px] bg-white/10" />
-           <div className="flex gap-6 items-center text-gray-500 uppercase font-black text-[9px]">
-              <label className="flex items-center gap-2 cursor-pointer group"><input type="checkbox" className="sr-only peer" checked={globalSetting.keep_temp} onChange={e=>setGlobalSetting({...globalSetting, keep_temp: e.target.checked})}/><div className="w-7 h-3.5 bg-white/5 border border-white/5 peer-checked:bg-cyan-600 rounded-full relative transition-all"><div className="absolute left-0.5 top-0.5 w-2 h-2 bg-white rounded-full transition-all peer-checked:left-4"></div></div><span className="group-hover:text-gray-300">Keep Temp</span></label>
-              <label className="flex items-center gap-2 cursor-pointer group"><input type="checkbox" className="sr-only peer" checked={globalSetting.skip_existing} onChange={e=>setGlobalSetting({...globalSetting, skip_existing: e.target.checked})}/><div className="w-7 h-3.5 bg-white/5 border border-white/5 peer-checked:bg-cyan-600 rounded-full relative transition-all"><div className="absolute left-0.5 top-0.5 w-2 h-2 bg-white rounded-full transition-all peer-checked:left-4"></div></div><span className="group-hover:text-gray-300">Skip Existing</span></label>
-           </div>
+           <button onClick={openSettings} className="flex items-center gap-2 text-gray-500 hover:text-cyan-500 transition-colors uppercase font-black text-[9px] tracking-widest"><Settings2 size={14}/> Flow Settings</button>
         </div>
         <button onClick={handleExecute} disabled={isSubmitting||!jobs.length} className="bg-cyan-600 hover:bg-cyan-400 text-white font-black text-[10px] px-6 py-2 rounded-full shadow-lg transition-all flex items-center gap-2 tracking-widest uppercase">{isSubmitting ? <Loader2 className="animate-spin" size={14}/> : <PlayCircle size={14}/>} Run Flow</button>
       </nav>
 
       <div className="flex-1 flex overflow-hidden w-full">
         <div className="flex-1 flex flex-col p-4 gap-4 overflow-hidden bg-black/20">
+           {error && (
+             <div className="bg-red-500/10 border border-red-500/20 text-red-500 px-6 py-4 rounded-2xl flex items-center justify-between animate-in slide-in-from-top duration-300">
+               <div className="flex items-center gap-3">
+                 <AlertCircle size={18} />
+                 <span className="text-xs font-black uppercase tracking-widest">{error}</span>
+               </div>
+               <button onClick={() => setError(null)} className="p-1 hover:bg-white/5 rounded-lg transition-colors"><X size={16}/></button>
+             </div>
+           )}
            <div className="flex-1 bg-black rounded-3xl overflow-hidden border border-white/[0.03] shadow-2xl relative group">
-              {videoInfo ? <video ref={videoRef} src={`${API_BASE}/api/stream?path=${encodeURIComponent(videoPath)}`} className="w-full h-full object-contain" onTimeUpdate={()=>!videoRef.current?.seeking&&setCurrentTime(videoRef.current.currentTime)} controls /> : <div className="w-full h-full flex flex-col items-center justify-center opacity-[0.03]"><Film size={180} /></div>}
+              {videoInfo ? <video ref={videoRef} src={`${API_BASE}/api/stream?path=${encodeURIComponent(videoPath)}`} className="w-full h-full object-contain" 
+                onTimeUpdate={()=>{
+                  if(videoRef.current && !videoRef.current.seeking) {
+                    const t = videoRef.current.currentTime
+                    setCurrentTime(t)
+                    if (!isTyping) setEditTime(formatTime(t))
+                  }
+                }} 
+                onError={() => {
+                  setError("Video resource unavailable (File may have been deleted or moved)");
+                  setVideoInfo(null);
+                  setKeyframes([]);
+                  setEstablishedMap({});
+                }}
+                controls /> : <div className="w-full h-full flex flex-col items-center justify-center opacity-[0.03]"><Film size={180} /></div>}
            </div>
            <div className="bg-[#0e0e0e]/80 backdrop-blur-md p-5 rounded-3xl border border-white/[0.05] space-y-5 shadow-2xl shrink-0">
               <div className="flex justify-between items-center px-2">
                  <div className="flex items-center gap-4 bg-white/[0.02] p-1 rounded-2xl border border-white/[0.03]">
                     <button onClick={() => stepKeyframe('prev')} disabled={isSubmitting} className="p-3 hover:bg-white/5 rounded-xl text-cyan-500 disabled:opacity-20 transition-colors shadow-inner"><ChevronLeft size={28}/></button>
-                    <div className="flex flex-col items-center px-6 min-w-[180px] border-x border-white/[0.03]"><span className="text-[9px] font-black text-gray-600 uppercase tracking-[0.3em] mb-1">Timecode Position</span><span className="font-mono text-2xl text-white font-black tracking-tight">{formatTime(currentTime)}</span></div>
+                    <div className="flex flex-col items-center px-6 min-w-[180px] border-x border-white/[0.03]"><span className="text-[9px] font-black text-gray-600 uppercase tracking-[0.3em] mb-1">Timecode Position</span><input className="bg-transparent border-none outline-none font-mono text-2xl text-white font-black tracking-tight text-center w-full selection:bg-cyan-500/30" value={editTime} onFocus={()=>setIsTyping(true)} onBlur={()=>setIsTyping(false)} onChange={e=>setEditTime(e.target.value)} onKeyDown={e=>e.key==='Enter'&&seekTo(parseTimeToSeconds(editTime))}/></div>
                     <button onClick={() => stepKeyframe('next')} disabled={isSubmitting} className="p-3 hover:bg-white/5 rounded-xl text-cyan-500 disabled:opacity-20 transition-colors shadow-inner"><ChevronRight size={28}/></button>
                  </div>
                  <div className="flex gap-3">
@@ -255,8 +358,24 @@ export default function App() {
                        {jobs.length === 0 ? <div className="text-center py-20 border-2 border-dashed border-white/[0.02] rounded-[2rem] opacity-10 text-xs italic uppercase">Queue is empty</div> : jobs.map((j, i) => {
                          const st = workflow?.jobStatuses[i], isR = st?.status === 'processing', isD = st?.status === 'completed' || st?.status === 'job_done' || workflow?.status === 'finished'
                          return (
-                          <div key={j.id} onClick={()=>setActiveJobId(j.id)} className={cn("group p-5 rounded-2xl border transition-all cursor-pointer relative overflow-hidden", activeJobId===j.id?"bg-cyan-500/[0.04] border-cyan-500/30 shadow-2xl":"bg-white/[0.01] border-white/[0.03] hover:border-white/[0.08]")}>
-                             <div className="flex justify-between items-center relative z-10"><div className="flex items-center gap-4">{isD ? <CheckCircle2 size={14} className="text-green-500"/> : isR ? <Loader2 size={14} className="text-cyan-500 animate-spin"/> : <div className={cn("w-6 h-6 flex items-center justify-center rounded-md font-black text-[9px] shadow-2xl", j.command==='split'?"bg-cyan-950 text-cyan-400":"bg-indigo-950 text-indigo-400")}>{i+1}</div>}<span className="text-xs font-black text-white uppercase tracking-tighter">{j.name}</span></div><button onClick={e=>{e.stopPropagation();setJobs(jobs.filter(x=>x.id!==j.id))}} className="opacity-0 group-hover:opacity-100 text-gray-700 hover:text-red-500 transition-opacity p-1"><X size={16}/></button></div>
+                          <div 
+                            key={j.id} 
+                            onClick={()=>setActiveJobId(j.id)} 
+                            draggable
+                            onDragStart={() => handleDragStart(i)}
+                            onDragEnter={() => handleDragEnter(i)}
+                            onDragEnd={handleDragEnd}
+                            onDragOver={(e) => e.preventDefault()}
+                            className={cn(
+                              "group p-5 rounded-2xl border transition-all cursor-pointer relative overflow-hidden flex items-center gap-4", 
+                              activeJobId===j.id?"bg-cyan-500/[0.04] border-cyan-500/30 shadow-2xl":"bg-white/[0.01] border-white/[0.03] hover:border-white/[0.08]",
+                              dragIdx === i && "opacity-20 border-cyan-500 border-dashed"
+                            )}
+                          >
+                             <div className="text-gray-700 cursor-grab active:cursor-grabbing hover:text-cyan-500 transition-colors">
+                               <GripVertical size={16} />
+                             </div>
+                             <div className="flex-1 flex justify-between items-center relative z-10"><div className="flex items-center gap-4">{isD ? <CheckCircle2 size={14} className="text-green-500"/> : isR ? <Loader2 size={14} className="text-cyan-500 animate-spin"/> : <div className={cn("w-6 h-6 flex items-center justify-center rounded-md font-black text-[9px] shadow-2xl", j.command==='split'?"bg-cyan-950 text-cyan-400":"bg-indigo-950 text-indigo-400")}>{i+1}</div>}<span className="text-xs font-black text-white uppercase tracking-tighter">{j.name}</span></div><button onClick={e=>{e.stopPropagation();setJobs(jobs.filter(x=>x.id!==j.id))}} className="opacity-0 group-hover:opacity-100 text-gray-700 hover:text-red-500 transition-opacity p-1"><X size={16}/></button></div>
                              {isR && <div className="absolute bottom-0 left-0 h-[2px] bg-cyan-500 transition-all duration-300" style={{ width: `${Math.round((st.completed / st.total) * 100)}%` }} />}
                           </div>
                          )
@@ -324,6 +443,101 @@ export default function App() {
            </div>
         </div>
       )}
+      {isSettingsOpen && (
+        <div className="fixed inset-0 z-[110] flex items-end justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-300" onClick={() => setIsSettingsOpen(false)}>
+          <div 
+            className="w-full bg-[#0c0c0c] border-t border-white/[0.05] rounded-t-[3rem] shadow-[0_-20px_50px_rgba(0,0,0,0.5)] p-10 space-y-8 animate-in slide-in-from-bottom duration-500"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center">
+              <div className="flex flex-col gap-1">
+                <h3 className="text-base font-black uppercase tracking-[0.4em] text-white flex items-center gap-3"><Settings2 size={18} className="text-cyan-500"/> Flow Settings</h3>
+                <p className="text-[10px] font-bold text-gray-600 uppercase tracking-widest">Global configuration for current flow</p>
+              </div>
+              <button onClick={() => setIsSettingsOpen(false)} className="p-3 bg-white/[0.03] rounded-full hover:bg-white/[0.08] transition-colors"><X size={20}/></button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-10">
+              <div className="space-y-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Input Video Path</label>
+                  <div className="flex gap-3">
+                    <input 
+                      className="flex-1 bg-black border border-white/[0.05] rounded-2xl px-5 py-4 text-xs text-white outline-none focus:border-cyan-500/30 font-mono transition-colors" 
+                      placeholder="e.g. /path/to/video.mp4" 
+                      value={tempVideoPath} 
+                      onChange={e => setTempVideoPath(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && applySettings()}
+                    />
+                  </div>
+                  <p className="text-[9px] text-gray-700 italic">Changing this path will reset all current jobs and timeline progress.</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Default Merge Output Directory</label>
+                  <input 
+                    className="w-full bg-black border border-white/[0.05] rounded-2xl px-5 py-4 text-xs text-cyan-400 outline-none focus:border-cyan-500/30 font-mono transition-colors" 
+                    placeholder="e.g. /path/to/merged/videos" 
+                    value={globalSetting.output_dir || ''} 
+                    onChange={e => setGlobalSetting({...globalSetting, output_dir: e.target.value})}
+                  />
+                  <p className="text-[9px] text-gray-700 italic">Only applies to Merge tasks that don't have an override.</p>
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Global Video Codec</label>
+                    <select 
+                      className="w-full bg-black border border-white/[0.05] rounded-2xl px-4 py-3.5 text-xs text-white outline-none font-bold appearance-none cursor-pointer focus:border-cyan-500/30"
+                      value={globalSetting.video_codec}
+                      onChange={e => setGlobalSetting({...globalSetting, video_codec: e.target.value})}
+                    >
+                      <option value="copy">COPY</option>
+                      <option value="libx264">H.264</option>
+                      <option value="h264_nvenc">NVENC</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Global Bitrate</label>
+                    <input 
+                      className="w-full bg-black border border-white/[0.05] rounded-2xl px-4 py-3.5 text-xs text-white outline-none font-mono focus:border-cyan-500/30"
+                      placeholder="e.g. 8M"
+                      value={globalSetting.video_bitrate || ''}
+                      onChange={e => setGlobalSetting({...globalSetting, video_bitrate: e.target.value})}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-5 pt-2">
+                  <label className="flex items-center justify-between cursor-pointer group">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[11px] font-black text-white uppercase tracking-wider group-hover:text-cyan-500 transition-colors">Keep Temporary Files</span>
+                      <span className="text-[9px] text-gray-600 font-bold uppercase tracking-[0.05em]">Do not delete segments after merge</span>
+                    </div>
+                    <input type="checkbox" className="sr-only peer" checked={globalSetting.keep_temp} onChange={e=>setGlobalSetting({...globalSetting, keep_temp: e.target.checked})}/>
+                    <div className="w-9 h-4.5 bg-white/5 border border-white/10 peer-checked:bg-cyan-600 rounded-full relative transition-all shadow-inner"><div className="absolute left-0.5 top-0.5 w-3 h-3 bg-white rounded-full transition-all peer-checked:left-5 shadow-md"></div></div>
+                  </label>
+
+                  <label className="flex items-center justify-between cursor-pointer group">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[11px] font-black text-white uppercase tracking-wider group-hover:text-cyan-500 transition-colors">Skip Existing Files</span>
+                      <span className="text-[9px] text-gray-600 font-bold uppercase tracking-[0.05em]">Prevent overwriting of output files</span>
+                    </div>
+                    <input type="checkbox" className="sr-only peer" checked={globalSetting.skip_existing} onChange={e=>setGlobalSetting({...globalSetting, skip_existing: e.target.checked})}/>
+                    <div className="w-9 h-4.5 bg-white/5 border border-white/10 peer-checked:bg-cyan-600 rounded-full relative transition-all shadow-inner"><div className="absolute left-0.5 top-0.5 w-3 h-3 bg-white rounded-full transition-all peer-checked:left-5 shadow-md"></div></div>
+                  </label>
+                </div>
+              </div>
+            </div>
+            <div className="pt-4 flex justify-center">
+              <button onClick={applySettings} className="px-12 py-3 bg-cyan-600 hover:bg-cyan-400 text-white font-black text-[10px] tracking-[0.2em] rounded-full transition-all uppercase shadow-lg shadow-cyan-900/20">Apply & Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }
