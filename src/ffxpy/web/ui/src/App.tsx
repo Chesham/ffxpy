@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { 
   Loader2, CheckCircle2, Plus, ChevronLeft, ChevronRight, 
-  Settings2, Combine, Clock, Code, LocateFixed, 
+  Settings2, Clock, Code, LocateFixed, 
   History as HistoryIcon, Layers, CircleDot, X, AlertCircle, PlayCircle, Film, Boxes, GripVertical
 } from 'lucide-react'
 import { clsx, type ClassValue } from 'clsx'
@@ -418,12 +418,12 @@ export default function App() {
                        })}
 
                        <div className="relative group">
-                          <div className="p-4 rounded-2xl border-2 border-dashed border-white/[0.03] bg-white/[0.01] flex items-center justify-center gap-3 text-[10px] font-black text-gray-600 uppercase tracking-widest group-hover:border-cyan-500/30 group-hover:bg-cyan-500/[0.02] group-hover:text-cyan-500 transition-all">
-                             <Plus size={16} /> New Job
+                          <div className="p-4 rounded-2xl border-2 border-dashed border-white/[0.03] bg-white/[0.01] flex items-center justify-center gap-3 text-[13px] font-black text-gray-600 uppercase tracking-widest group-hover:border-cyan-500/30 group-hover:bg-cyan-500/[0.02] group-hover:text-cyan-500 transition-all">
+                             <Plus size={18} /> New Job
                           </div>
                           <div className="absolute inset-0 flex opacity-0 group-hover:opacity-100 transition-all z-10 overflow-hidden rounded-2xl">
-                             <button onClick={() => addJob('split')} className="flex-1 bg-cyan-600 hover:bg-cyan-500 text-white font-black text-[10px] flex items-center justify-center gap-2 uppercase tracking-tighter"><Plus size={14}/> Add Split</button>
-                             <button onClick={() => addJob('merge')} className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-black text-[10px] flex items-center justify-center gap-2 uppercase tracking-tighter"><Combine size={14}/> Add Merge</button>
+                             <button onClick={() => addJob('split')} className="flex-1 bg-cyan-600 hover:bg-cyan-500 text-white font-black text-[13px] flex items-center justify-center gap-2 uppercase tracking-tight">✂️ Add Split</button>
+                             <button onClick={() => addJob('merge')} className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-black text-[13px] flex items-center justify-center gap-2 uppercase tracking-tight">🔗 Add Merge</button>
                           </div>
                        </div>
                     </div>
