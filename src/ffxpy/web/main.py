@@ -7,7 +7,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any, Coroutine, Dict, List
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 
@@ -34,6 +34,7 @@ TEMP_DIR.mkdir(parents=True, exist_ok=True)
 # Global stores
 keyframes_cache: Dict[str, List[float]] = {}
 active_jobs: Dict[str, asyncio.Queue] = {}
+running_tasks: Dict[str, asyncio.Task] = {}
 
 
 @app.get('/api/probe')
@@ -194,7 +195,9 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
                 job.setting, input_path, output_path, before_inputs=before_inputs
             )
 
-            async def progress_callback(data: Dict[str, Any]) -> Coroutine[Any, Any, None]:
+            async def progress_callback(
+                data: Dict[str, Any]
+            ) -> Coroutine[Any, Any, None]:
                 if data['status'] == 'processing':
                     cur_p = data.get('completed', 0.0)
                     ratio = min(1.0, cur_p / weight) if weight > 0 else 1.0
@@ -269,30 +272,49 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
         for i, j in merges:
             await run_single_job(i, j)
 
-        if not flow.setting.keep_temp:
-            for f in res_cleanup:
-                if f.exists():
-                    try:
-                        f.unlink()
-                    except Exception:
-                        pass
         await queue.put({
             'status': 'finished',
             'overall_total': 1.0,
             'overall_completed': 1.0,
             'total_jobs': total_jobs
         })
+    except asyncio.CancelledError:
+        await queue.put({'status': 'failed', 'error': 'Cancelled by user'})
+        raise
     except Exception as e:
         await queue.put({'status': 'failed', 'error': str(e)})
+    finally:
+        if 'flow' in locals() and not flow.setting.keep_temp:
+            for f in res_cleanup:
+                if f.exists():
+                    try:
+                        f.unlink()
+                    except Exception:
+                        pass
 
 
 @app.post('/api/execute')
-async def execute_task(request: Request, background_tasks: BackgroundTasks):
+async def execute_task(request: Request):
     job_id = str(uuid.uuid4())
     active_jobs[job_id] = asyncio.Queue()
     data = await request.json()
-    background_tasks.add_task(run_flow_background, job_id, data)
+    task = asyncio.create_task(run_flow_background(job_id, data))
+    running_tasks[job_id] = task
+
+    def cleanup_task(t: asyncio.Task):
+        if job_id in running_tasks:
+            del running_tasks[job_id]
+    
+    task.add_done_callback(cleanup_task)
     return {'job_id': job_id}
+
+
+@app.post('/api/cancel/{job_id}')
+async def cancel_task(job_id: str):
+    if job_id in running_tasks:
+        running_tasks[job_id].cancel()
+        return {'status': 'cancelling'}
+    return {'status': 'not_found'}
 
 
 @app.get('/api/events/{job_id}')

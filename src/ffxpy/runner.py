@@ -182,17 +182,32 @@ async def run_ffmpeg(
     if process.stderr is None:
         raise RuntimeError('ffmpeg process failed to start stderr stream')
 
-    if internal_progress and progress:
-        with progress:
+    try:
+        if internal_progress and progress:
+            with progress:
+                await stream_output(process.stderr)
+                await process.wait()
+        else:
             await stream_output(process.stderr)
             await process.wait()
-    else:
-        await stream_output(process.stderr)
-        await process.wait()
+    except asyncio.CancelledError:
+        try:
+            process.terminate()
+            await asyncio.wait_for(process.wait(), timeout=2.0)
+        except Exception:
+            try:
+                process.kill()
+            except Exception:
+                pass
+        raise
 
     if process.returncode != 0:
         if on_progress:
-            res = on_progress({'status': 'error', 'job_name': job_name, 'returncode': process.returncode})
+            res = on_progress({
+                'status': 'error',
+                'job_name': job_name,
+                'returncode': process.returncode
+            })
             if asyncio.iscoroutine(res):
                 await res
         return False

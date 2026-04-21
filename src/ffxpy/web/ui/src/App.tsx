@@ -43,6 +43,7 @@ export default function App() {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<'editor' | 'yaml'>('editor')
   const [workflow, setWorkflow] = useState<WorkflowState | null>(null)
+  const [currentJobId, setCurrentJobId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [editTime, setEditTime] = useState('')
@@ -243,12 +244,25 @@ export default function App() {
     setJobs([...jobs, newJob]); setActiveJobId(id)
   }
 
+  const handleCancel = async () => {
+    if (!currentJobId) return
+    setWorkflow(prev => prev ? { ...prev, status: 'cancelling' } : null)
+    try {
+      await fetch(`${API_BASE}/api/cancel/${currentJobId}`, { method: 'POST' })
+    } catch (e: unknown) {
+      console.error("Cancel failed", e)
+      setWorkflow(prev => prev ? { ...prev, status: 'failed' } : null)
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   const handleExecute = async () => {
-    setIsModalOpen(true); setWorkflow({ status: 'preparing', overall_completed: 0, overall_total: 1.0, total_jobs: jobs.length, jobStatuses: {} }); setIsSubmitting(true); setError(null)
+    setIsModalOpen(true); setWorkflow({ status: 'preparing', overall_completed: 0, overall_total: 1.0, total_jobs: jobs.length, jobStatuses: {} }); setIsSubmitting(true); setError(null); setCurrentJobId(null)
     try {
       const res = await fetch(`${API_BASE}/api/execute`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(yaml.load(yamlText)) })
       if (!res.ok) throw new Error(await res.text())
       const { job_id } = await res.json()
+      setCurrentJobId(job_id)
       const es = new EventSource(`${API_BASE}/api/events/${job_id}`)
       es.onmessage = (e) => {
         const data = JSON.parse(e.data)
@@ -415,14 +429,27 @@ export default function App() {
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[#050505]/90 backdrop-blur-2xl animate-in fade-in duration-500">
            <div className="w-[650px] bg-[#0c0c0c] border border-white/[0.05] rounded-[3rem] shadow-[0_0_100px_rgba(0,0,0,1)] flex flex-col overflow-hidden">
               <div className="p-10 border-b border-white/[0.03] flex justify-between items-center bg-white/[0.01]">
-                 <div className="flex flex-col gap-1.5"><h3 className="text-base font-black uppercase tracking-[0.4em] text-white flex items-center gap-3"><CircleDot size={14} className="text-cyan-500 animate-pulse"/> Flow Execution</h3><p className="text-[10px] font-bold text-gray-600 uppercase tracking-widest">{workflow.status === 'finished' ? 'Process Finalized' : 'Executing Flow...'}</p></div>
+                 <div className="flex flex-col gap-1.5">
+                   <h3 className="text-base font-black uppercase tracking-[0.4em] text-white flex items-center gap-3">
+                     <CircleDot size={14} className={cn("text-cyan-500", (workflow.status === 'running' || workflow.status === 'preparing') && "animate-pulse")}/> Flow Execution
+                   </h3>
+                   <p className="text-[10px] font-bold text-gray-600 uppercase tracking-widest">
+                     {workflow.status === 'finished' ? 'Process Finalized' : 
+                      workflow.status === 'cancelling' ? 'Cancelling Flow...' :
+                      workflow.status === 'failed' ? 'Process Terminated' : 'Executing Flow...'}
+                   </p>
+                 </div>
                  <button onClick={() => { setIsModalOpen(false); setWorkflow(null); }} className="p-4 bg-white/[0.03] rounded-full hover:bg-white/[0.08] transition-colors"><X size={24}/></button>
               </div>
               <div className="p-10 flex-1 overflow-y-auto max-h-[500px] space-y-6 custom-scrollbar">
-                 <div className="bg-black/60 p-7 rounded-[2rem] border border-white/[0.03] flex flex-col gap-4 shadow-inner"><div className="flex justify-between items-end"><span className="text-[10px] font-black text-gray-500 uppercase tracking-[0.3em]">Total Flow Progress</span><span className="text-2xl font-black text-white font-mono tracking-tighter">{Math.round((workflow.overall_completed / workflow.overall_total) * 100)}%</span></div><div className="h-2 bg-white/[0.02] rounded-full overflow-hidden shadow-inner"><div className="h-full bg-gradient-to-r from-cyan-600 to-cyan-400 transition-all duration-700 shadow-[0_0_20px_rgba(6,182,212,0.5)]" style={{ width: `${Math.round((workflow.overall_completed / workflow.overall_total) * 100)}%` }} /></div></div>
+                 <div className="bg-black/60 p-7 rounded-[2rem] border border-white/[0.03] flex flex-col gap-4 shadow-inner"><div className="flex justify-between items-end"><span className="text-[10px] font-black text-gray-500 uppercase tracking-[0.3em]">Total Flow Progress</span><span className="text-2xl font-black text-white font-mono tracking-tighter">{Math.round((workflow.overall_completed / workflow.overall_total) * 100)}%</span></div><div className="h-2 bg-white/[0.02] rounded-full overflow-hidden shadow-inner"><div className={cn("h-full transition-all duration-700 shadow-[0_0_20px_rgba(6,182,212,0.5)]", workflow.status==='failed'?"bg-red-500":"bg-gradient-to-r from-cyan-600 to-cyan-400")} style={{ width: `${Math.round((workflow.overall_completed / workflow.overall_total) * 100)}%` }} /></div></div>
                  <div className="space-y-2.5">
                     {jobs.map((job, idx) => {
-                       const st = workflow.jobStatuses[idx], isR = st?.status === 'processing', isD = st?.status === 'completed' || st?.status === 'job_done' || workflow.status === 'finished', isF = st?.status === 'failed' || st?.status === 'error'
+                       const st = workflow.jobStatuses[idx]
+                       const isActive = workflow.status === 'running' || workflow.status === 'preparing' || workflow.status === 'cancelling'
+                       const isR = st?.status === 'processing' && isActive
+                       const isD = st?.status === 'completed' || st?.status === 'job_done' || workflow.status === 'finished'
+                       const isF = st?.status === 'failed' || st?.status === 'error' || (st?.status === 'processing' && !isActive)
                        const jobP = st ? Math.round((st.completed / (st.total || 1)) * 100) : 0
                        return (
                          <div key={job.id} className={cn("p-5 rounded-2xl border transition-all flex flex-col gap-3", isR ? "bg-cyan-500/[0.03] border-cyan-500/20" : isD ? "bg-green-500/[0.02] border-green-500/10 opacity-40" : "bg-white/[0.01] border-transparent opacity-20")}>
@@ -437,8 +464,12 @@ export default function App() {
                     })}
                  </div>
               </div>
-              <div className="p-10 bg-white/[0.01] border-t border-white/[0.03] flex justify-center">
-                 <button onClick={() => { setIsModalOpen(false); setWorkflow(null); }} className={cn("px-16 py-4 rounded-full font-black text-[11px] tracking-[0.2em] transition-all shadow-2xl uppercase", workflow.status === 'finished' ? "bg-green-600 hover:bg-green-500 text-white shadow-green-900/40" : "bg-white/[0.03] text-gray-600 cursor-not-allowed")}>{workflow.status === 'finished' ? 'Flow Finalized' : 'Processing Flow...'}</button>
+              <div className="p-10 bg-white/[0.01] border-t border-white/[0.03] flex justify-center gap-4">
+                 {workflow.status === 'running' || workflow.status === 'preparing' ? (
+                   <button onClick={handleCancel} className="px-16 py-4 rounded-full font-black text-[11px] tracking-[0.2em] transition-all shadow-2xl uppercase bg-red-600/20 hover:bg-red-600 text-red-500 hover:text-white border border-red-500/20">Cancel Execution</button>
+                 ) : (
+                   <button onClick={() => { setIsModalOpen(false); setWorkflow(null); }} className={cn("px-16 py-4 rounded-full font-black text-[11px] tracking-[0.2em] transition-all shadow-2xl uppercase", (workflow.status === 'finished' || workflow.status === 'failed') ? "bg-green-600 hover:bg-green-500 text-white shadow-green-900/40" : "bg-white/[0.03] text-gray-600 cursor-not-allowed")}>{workflow.status === 'finished' ? 'Flow Finalized' : workflow.status === 'failed' ? 'Close' : 'Processing Flow...'}</button>
+                 )}
               </div>
            </div>
         </div>
