@@ -110,6 +110,20 @@ export default function App() {
     setIsSettingsOpen(false)
   }
 
+  const handleCloseVideo = async () => {
+    try {
+      await fetch(`${API_BASE}/api/close`, { method: 'POST' })
+    } catch (e) {}
+    setVideoPath('')
+    setVideoInfo(null)
+    setJobs([])
+    setActiveJobId(null)
+    setCurrentTime(0)
+    setKeyframes([])
+    setEstablishedMap({})
+    setError(null)
+  }
+
   useEffect(() => {
     localStorage.setItem('ffxpy_global_settings', JSON.stringify(globalSetting))
   }, [globalSetting])
@@ -311,6 +325,7 @@ export default function App() {
            <div className="h-6 w-[1px] bg-white/10" />
            <div className="flex items-center gap-4">
              <button onClick={openSettings} className="flex items-center gap-2 text-gray-500 hover:text-cyan-500 transition-colors uppercase font-black text-[9px] tracking-widest"><Settings2 size={14}/> Flow Settings</button>
+             <button onClick={handleCloseVideo} disabled={!videoPath} className="flex items-center gap-2 text-gray-500 hover:text-red-500 disabled:opacity-20 transition-colors uppercase font-black text-[9px] tracking-widest border-l border-white/5 pl-4"><X size={14}/> Close Video</button>
              <div className="flex items-center gap-3 px-4 py-1.5 bg-white/[0.02] border border-white/[0.05] rounded-full">
                <div className="flex items-center gap-2 border-r border-white/5 pr-3">
                  <span className="text-[10px] font-black text-gray-600 uppercase tracking-tighter">Video</span>

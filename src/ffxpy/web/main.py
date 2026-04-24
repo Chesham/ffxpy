@@ -46,44 +46,18 @@ async def get_video_info(path: str):
 
 
 @app.get('/api/stream')
-async def stream_video(path: str, request: Request):
+async def stream_video(path: str):
     video_path = Path(path)
     if not video_path.exists():
         raise HTTPException(status_code=404, detail='File not found')
-
-    file_size = video_path.stat().st_size
-    range_header = request.headers.get('range')
-
-    if range_header:
-        match = re.match(r'bytes=(\d+)-(\d*)', range_header)
-        if match:
-            start = int(match.group(1))
-            end = int(match.group(2)) if match.group(2) else file_size - 1
-            chunk_size = (end - start) + 1
-
-            def file_iterator():
-                with open(video_path, 'rb') as f:
-                    f.seek(start)
-                    remaining = chunk_size
-                    while remaining > 0:
-                        to_read = min(remaining, 1024 * 1024)
-                        data = f.read(to_read)
-                        if not data:
-                            break
-                        remaining -= len(data)
-                        yield data
-
-            return StreamingResponse(
-                file_iterator(),
-                status_code=206,
-                headers={
-                    'Content-Range': f'bytes {start}-{end}/{file_size}',
-                    'Accept-Ranges': 'bytes',
-                    'Content-Length': str(chunk_size),
-                    'Content-Type': 'video/mp4',
-                },
-            )
     return FileResponse(video_path, media_type='video/mp4')
+
+
+@app.post('/api/close')
+async def close_video():
+    """Clear all global caches to release memory and potentially file hints."""
+    keyframes_cache.clear()
+    return {'status': 'closed'}
 
 
 @app.get('/api/keyframes')
@@ -122,8 +96,16 @@ async def get_keyframes(path: str, time: float = -1.0, range_sec: float = 2.0):
     process = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
-    stdout, _ = await process.communicate()
-    data = json.loads(stdout.decode())
+    try:
+        stdout, _ = await process.communicate()
+        data = json.loads(stdout.decode())
+    finally:
+        if process.returncode is None:
+            try:
+                process.terminate()
+                await process.wait()
+            except Exception:
+                pass
 
     kfs = []
     for f in data.get('frames', []):
