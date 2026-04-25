@@ -10,6 +10,7 @@ import yaml from 'js-yaml'
 
 function cn(...inputs: ClassValue[]) { return twMerge(clsx(inputs)) }
 const API_BASE = 'http://localhost:8000'
+const normalizePath = (p: string) => p.replace(/\\/g, '/')
 
 interface VideoInfo { format_name: string; duration: string; duration_sec: number }
 interface JobSetting { start?: string; end?: string; video_codec?: string; video_bitrate?: string; audio_codec?: string; audio_bitrate?: string; scale?: string; output_dir?: string; output_path?: string; keep_temp?: boolean; skip_existing?: boolean }
@@ -488,7 +489,8 @@ export default function App() {
                                       <div className="space-y-2"><label>Video Codec</label><select className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2 text-xs text-white outline-none font-bold appearance-none cursor-pointer" value={activeJob.setting.video_codec||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,video_codec:e.target.value||undefined}}:x))}><option value="">Inherit</option><option value="copy">COPY</option><option value="libx264">H.264</option><option value="h264_nvenc">NVENC</option></select></div>
                                       <div className="space-y-2"><label>Target Bitrate</label><input className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2 text-xs text-white outline-none font-mono font-normal" placeholder="e.g. 12M" value={activeJob.setting.video_bitrate||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,video_bitrate:e.target.value||undefined}}:x))} /></div>
                                     </div>
-                                    <div className="space-y-2 border-t border-white/[0.03] pt-5"><label>Output Directory Override</label><input className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2 text-xs text-white outline-none focus:border-cyan-500/30 font-normal transition-colors" placeholder="e.g. ./output" value={activeJob.setting.output_dir||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,output_dir:e.target.value||undefined}}:x))} /></div>
+                                    <div className="space-y-2 border-t border-white/[0.03] pt-6"><label>Output Directory Override</label><input className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2.5 text-xs text-white outline-none focus:border-cyan-500/30 font-normal transition-colors" placeholder="e.g. ./output" value={activeJob.setting.output_dir||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,output_dir:normalizePath(e.target.value)||undefined}}:x))} /></div>
+
                                 </div>
                               </div>
                             )}
@@ -589,7 +591,7 @@ export default function App() {
                       className="flex-1 bg-black border border-white/[0.05] rounded-2xl px-5 py-4 text-xs text-white outline-none focus:border-cyan-500/30 font-mono transition-colors" 
                       placeholder="e.g. /path/to/video.mp4" 
                       value={tempVideoPath} 
-                      onChange={e => setTempVideoPath(e.target.value)}
+                      onChange={e => setTempVideoPath(normalizePath(e.target.value))}
                       onKeyDown={e => e.key === 'Enter' && applySettings()}
                     />
                   </div>
@@ -602,7 +604,7 @@ export default function App() {
                     className="w-full bg-black border border-white/[0.05] rounded-2xl px-5 py-4 text-xs text-cyan-400 outline-none focus:border-cyan-500/30 font-mono transition-colors" 
                     placeholder="e.g. /path/to/merged/videos" 
                     value={globalSetting.output_dir || ''} 
-                    onChange={e => setGlobalSetting({...globalSetting, output_dir: e.target.value})}
+                    onChange={e => setGlobalSetting({...globalSetting, output_dir: normalizePath(e.target.value)})}
                   />
                   <p className="text-[9px] text-gray-700 italic">Only applies to Merge tasks that don't have an override.</p>
                 </div>
