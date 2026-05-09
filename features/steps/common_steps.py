@@ -35,12 +35,11 @@ def step_when_run_command(context, command):
     else:
         full_command = command
 
-
     # Run the command and capture output
     env = os.environ.copy()
     if getattr(context, 'env', None):
         env.update(context.env)
-    
+
     # Force coverage to write to the project root
     env['COVERAGE_FILE'] = os.path.join(os.getcwd(), '.coverage')
 

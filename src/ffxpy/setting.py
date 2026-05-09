@@ -55,6 +55,7 @@ class Setting(pydantic_settings.BaseSettings):
     merge_paths: list[Path] = pydantic.Field(default_factory=list)
     keep_temp: bool = False
     skip_validation: bool = False
+    deinterlace: bool = False
 
     @pydantic.field_validator(
         'working_dir', 'output_dir', 'output_path', 'input_path', mode='before'

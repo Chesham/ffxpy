@@ -1,7 +1,7 @@
 import asyncio
 import re
 from datetime import timedelta
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from rich.console import Console
 from rich.progress import (
@@ -23,7 +23,7 @@ async def run_ffmpeg(
     job_name: Optional[str] = None,
     progress: Optional[Progress] = None,
     master_task_id: Optional[TaskID] = None,
-    on_progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+    on_progress: Optional[Callable[[Dict[str, Any]], Union[None, Any]]] = None,
 ):
     cmd_str = ' '.join(str(arg) for arg in args)
     if dry_run:
@@ -203,15 +203,17 @@ async def run_ffmpeg(
 
     if process.returncode != 0:
         if on_progress:
-            res = on_progress({
-                'status': 'error',
-                'job_name': job_name,
-                'returncode': process.returncode
-            })
+            res = on_progress(
+                {
+                    'status': 'error',
+                    'job_name': job_name,
+                    'returncode': process.returncode,
+                }
+            )
             if asyncio.iscoroutine(res):
                 await res
         return False
-    
+
     if on_progress:
         res = on_progress({'status': 'completed', 'job_name': job_name})
         if asyncio.iscoroutine(res):

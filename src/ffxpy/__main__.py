@@ -19,7 +19,7 @@ from ffxpy import __version__
 from ffxpy.const import Command
 from ffxpy.context import Context, solve_context
 from ffxpy.models.flow import Flow, merge_normalize, split_normalize
-from ffxpy.probe import probe_video
+from ffxpy.probe import detect_interlacing_heavily, is_interlaced, probe_video
 from ffxpy.runner import run_ffmpeg
 from ffxpy.setting import Setting
 from ffxpy.vendor import async_typer
@@ -71,6 +71,11 @@ def callback(
         '-c',
         help='Number of concurrent jobs.',
     ),
+    deinterlace: bool = typer.Option(
+        None,
+        '--deinterlace',
+        help='Auto-detect and deinterlace video if needed.',
+    ),
     version: bool = typer.Option(
         None,
         '--version',
@@ -100,6 +105,8 @@ def callback(
     if concurrency is not None:
         ctx.setting.concurrency = concurrency
         ctx.concurrency_specified = True
+    if deinterlace is not None:
+        ctx.setting.deinterlace = deinterlace
     typer_ctx.meta['context'] = ctx
 
 
@@ -170,6 +177,7 @@ async def split(
     setting.with_suffix = with_suffix
 
     # Validate input video range
+    detected_filters = []
     try:
         info = await probe_video(input_path, ffprobe_path=setting.ffprobe_path)
         if setting.start and setting.start > info.duration:
@@ -178,6 +186,23 @@ async def split(
             raise ValueError(f'end time {end} is out of range ({info.duration})')
         if setting.start and setting.end and setting.start >= setting.end:
             raise ValueError(f'start time {start} must be less than end time {end}')
+
+        if setting.deinterlace:
+            if is_interlaced(info):
+                console.print(
+                    '[yellow]Interlaced video detected, applying yadif...[/yellow]'
+                )
+                detected_filters.append('yadif')
+            else:
+                # Metadata check failed, try frame analysis
+                if await detect_interlacing_heavily(
+                    input_path, ffmpeg_path=setting.ffmpeg_path
+                ):
+                    console.print(
+                        '[yellow]Interlacing detected via frame analysis, '
+                        'applying yadif...[/yellow]'
+                    )
+                    detected_filters.append('yadif')
 
         # Calculate split duration for progress bar
         actual_start = setting.start or timedelta(0)
@@ -205,7 +230,9 @@ async def split(
                 'Use --overwrite, -y to overwrite it.'
             )
 
-    args = compile_commandline(setting, input_path, output_path)
+    args = compile_commandline(
+        setting, input_path, output_path, filters=detected_filters
+    )
     await run_ffmpeg(
         args,
         dry_run=setting.dry_run,
@@ -261,6 +288,31 @@ async def merge(
     if not setting.merge_paths:
         raise ValueError('no merge paths found')
 
+    detected_filters = []
+    if setting.deinterlace:
+        for path in setting.merge_paths:
+            try:
+                info = await probe_video(path, ffprobe_path=setting.ffprobe_path)
+                if is_interlaced(info):
+                    console.print(
+                        f'[yellow]Interlaced video detected in "{path.name}", '
+                        'applying yadif...[/yellow]'
+                    )
+                    detected_filters.append('yadif')
+                    break
+                else:
+                    if await detect_interlacing_heavily(
+                        path, ffmpeg_path=setting.ffmpeg_path
+                    ):
+                        console.print(
+                            f'[yellow]Interlacing detected in "{path.name}" '
+                            'via frame analysis, applying yadif...[/yellow]'
+                        )
+                        detected_filters.append('yadif')
+                        break
+            except Exception:
+                pass
+
     args = compile_commandline(
         setting,
         setting.input_path,
@@ -269,6 +321,7 @@ async def merge(
             '-f': 'concat',
             '-safe': '0',
         },
+        filters=detected_filters,
     )
 
     if setting.input_path:
@@ -418,11 +471,13 @@ async def flow(
 
     # Phase 1: Pre-flight Validation (No side effects)
     job_durations: list[timedelta | None] = []
+    job_filters: list[list[str]] = []
     if not flow_data.setting.skip_validation:
         console.print('[bold cyan]Validating workflow...[/bold cyan]')
         for index, job in enumerate(flow_data.jobs):
             job_name = job.name or f'Job #{index}'
             job_duration = None
+            detected_filters = []
             if job.command == Command.SPLIT:
                 if not job.setting.input_path:
                     raise ValueError(f'job {job_name} has no input path')
@@ -451,6 +506,22 @@ async def flow(
                             f'end time {job.setting.end}'
                         )
 
+                    if job.setting.deinterlace:
+                        if is_interlaced(info):
+                            console.print(
+                                f'[yellow]Interlaced video detected for "{job_name}", '
+                                'applying yadif...[/yellow]'
+                            )
+                            detected_filters.append('yadif')
+                        elif await detect_interlacing_heavily(
+                            job.setting.input_path, ffmpeg_path=job.setting.ffmpeg_path
+                        ):
+                            console.print(
+                                f'[yellow]Interlacing detected for "{job_name}" '
+                                'via frame analysis, applying yadif...[/yellow]'
+                            )
+                            detected_filters.append('yadif')
+
                     actual_start = job.setting.start or timedelta(0)
                     actual_end = job.setting.end or info.duration
                     job_duration = actual_end - actual_start
@@ -466,6 +537,23 @@ async def flow(
                                 path, ffprobe_path=job.setting.ffprobe_path
                             )
                             total_merge_duration += info.duration
+
+                            # For merge, we might need deinterlace if ANY
+                            # of the inputs are interlaced and we are transcoding.
+                            if (
+                                job.setting.deinterlace
+                                and 'yadif' not in detected_filters
+                            ):
+                                if is_interlaced(
+                                    info
+                                ) or await detect_interlacing_heavily(
+                                    path, ffmpeg_path=job.setting.ffmpeg_path
+                                ):
+                                    console.print(
+                                        '[yellow]Interlaced video detected, '
+                                        'applying yadif...[/yellow]'
+                                    )
+                                    detected_filters.append('yadif')
                         except Exception:
                             # If we can't probe one of the files, we might not have
                             # accurate total duration
@@ -474,9 +562,11 @@ async def flow(
                         job_duration = total_merge_duration
 
             job_durations.append(job_duration)
+            job_filters.append(detected_filters)
     else:
         console.print('[yellow]Skipping pre-flight validation...[/yellow]')
         job_durations = [None] * len(flow_data.jobs)
+        job_filters = [[] for _ in range(len(flow_data.jobs))]
 
     # Phase 2: Execution (Start making changes)
     pending_tasks: list[asyncio.Task] = []
@@ -536,6 +626,7 @@ async def flow(
             for index, job in enumerate(flow_data.jobs):
                 job_name = job.name or f'Job #{index}'
                 job_duration = job_durations[index]
+                detected_filters = job_filters[index]
 
                 before_inputs = {}
                 if job.command == Command.MERGE:
@@ -576,6 +667,7 @@ async def flow(
                     job.setting.input_path,
                     job.setting.output_path,
                     before_inputs=before_inputs,
+                    filters=detected_filters,
                 )
 
                 if job.command == Command.MERGE:
@@ -696,6 +788,7 @@ def compile_commandline(
     output_path: Path,
     before_inputs: dict[str, str] | None = None,
     after_inputs: dict[str, str] | None = None,
+    filters: list[str] | None = None,
 ) -> list[str]:
     args = [setting.ffmpeg_path]
     # Global flags
@@ -747,8 +840,14 @@ def compile_commandline(
     if after_inputs:
         args += [str(item) for pair in after_inputs.items() for item in pair]
 
+    # Filters
+    final_filters = filters[:] if filters else []
     if setting.scale:
-        args += ['-vf', f'scale={setting.scale}']
+        final_filters.append(f'scale={setting.scale}')
+
+    if final_filters:
+        args += ['-vf', ','.join(final_filters)]
+
     args += ['-c:v', setting.video_codec, '-c:a', setting.audio_codec]
     if setting.video_bitrate:
         args += ['-b:v', setting.video_bitrate]

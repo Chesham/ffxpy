@@ -13,7 +13,7 @@ const API_BASE = 'http://localhost:8000'
 const normalizePath = (p: string) => p.replace(/\\/g, '/')
 
 interface VideoInfo { format_name: string; duration: string; duration_sec: number }
-interface JobSetting { start?: string; end?: string; video_codec?: string; video_bitrate?: string; audio_codec?: string; audio_bitrate?: string; scale?: string; output_dir?: string; output_path?: string; keep_temp?: boolean; skip_existing?: boolean }
+interface JobSetting { start?: string; end?: string; video_codec?: string; video_bitrate?: string; audio_codec?: string; audio_bitrate?: string; scale?: string; output_dir?: string; output_path?: string; keep_temp?: boolean; skip_existing?: boolean; deinterlace?: boolean }
 interface Job { id: string; name: string; command: 'split' | 'merge'; setting: JobSetting }
 interface JobStatus { status: string; completed: number; total: number; name?: string }
 interface WorkflowState { status: string; overall_completed: number; overall_total: number; total_jobs: number; jobStatuses: Record<number, JobStatus> }
@@ -25,6 +25,7 @@ interface GlobalSetting {
   overwrite: boolean;
   keep_temp: boolean;
   skip_existing: boolean;
+  deinterlace: boolean;
   output_dir: string;
 }
 
@@ -36,7 +37,7 @@ export default function App() {
   const [activeJobId, setActiveJobId] = useState<string | null>(null)
   const [globalSetting, setGlobalSetting] = useState<GlobalSetting>(() => {
     const saved = localStorage.getItem('ffxpy_global_settings')
-    return saved ? JSON.parse(saved) : { video_codec: 'copy', audio_codec: 'copy', video_bitrate: '', overwrite: true, keep_temp: false, skip_existing: false, output_dir: '' }
+    return saved ? JSON.parse(saved) : { video_codec: 'copy', audio_codec: 'copy', video_bitrate: '', overwrite: true, keep_temp: false, skip_existing: false, deinterlace: false, output_dir: '' }
   })
   const [yamlText, setYamlText] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -144,6 +145,7 @@ export default function App() {
         overwrite: globalSetting.overwrite,
         keep_temp: globalSetting.keep_temp,
         skip_existing: globalSetting.skip_existing,
+        deinterlace: globalSetting.deinterlace,
         input_path: videoPath 
       }),
       jobs: jobs.map(j => {
@@ -489,6 +491,19 @@ export default function App() {
                                       <div className="space-y-2"><label>Video Codec</label><select className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2 text-xs text-white outline-none font-bold appearance-none cursor-pointer" value={activeJob.setting.video_codec||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,video_codec:e.target.value||undefined}}:x))}><option value="">Inherit</option><option value="copy">COPY</option><option value="libx264">H.264</option><option value="h264_nvenc">NVENC</option></select></div>
                                       <div className="space-y-2"><label>Target Bitrate</label><input className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2 text-xs text-white outline-none font-mono font-normal" placeholder="e.g. 12M" value={activeJob.setting.video_bitrate||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,video_bitrate:e.target.value||undefined}}:x))} /></div>
                                     </div>
+                                    <div className="space-y-2 border-t border-white/[0.03] pt-6">
+                                      <label className="flex items-center justify-between cursor-pointer group">
+                                        <div className="flex flex-col gap-0.5">
+                                          <span className="text-[11px] font-black text-white uppercase tracking-wider group-hover:text-cyan-500 transition-colors">Deinterlace</span>
+                                          <span className="text-[9px] text-gray-600 font-bold uppercase tracking-[0.05em]">Auto-detect and fix interlaced video</span>
+                                        </div>
+                                        <div className="relative w-10 h-5">
+                                          <input type="checkbox" className="sr-only peer" checked={activeJob.setting.deinterlace || false} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,deinterlace:e.target.checked}}:x))}/>
+                                          <div className="w-10 h-5 bg-white/5 border border-white/10 peer-checked:bg-cyan-600 rounded-full transition-all shadow-inner"></div>
+                                          <div className="absolute left-1 top-1 w-3 h-3 bg-white rounded-full transition-all peer-checked:translate-x-5 shadow-md pointer-events-none"></div>
+                                        </div>
+                                      </label>
+                                    </div>
                                     <div className="space-y-2 border-t border-white/[0.03] pt-6"><label>Output Directory Override</label><input className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2.5 text-xs text-white outline-none focus:border-cyan-500/30 font-normal transition-colors" placeholder="e.g. ./output" value={activeJob.setting.output_dir||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,output_dir:normalizePath(e.target.value)||undefined}}:x))} /></div>
 
                                 </div>
@@ -641,8 +656,11 @@ export default function App() {
                       <span className="text-[11px] font-black text-white uppercase tracking-wider group-hover:text-cyan-500 transition-colors">Keep Temporary Files</span>
                       <span className="text-[9px] text-gray-600 font-bold uppercase tracking-[0.05em]">Do not delete segments after merge</span>
                     </div>
-                    <input type="checkbox" className="sr-only peer" checked={globalSetting.keep_temp} onChange={e=>setGlobalSetting({...globalSetting, keep_temp: e.target.checked})}/>
-                    <div className="w-9 h-4.5 bg-white/5 border border-white/10 peer-checked:bg-cyan-600 rounded-full relative transition-all shadow-inner"><div className="absolute left-0.5 top-0.5 w-3 h-3 bg-white rounded-full transition-all peer-checked:left-5 shadow-md"></div></div>
+                    <div className="relative w-10 h-5">
+                      <input type="checkbox" className="sr-only peer" checked={globalSetting.keep_temp} onChange={e=>setGlobalSetting({...globalSetting, keep_temp: e.target.checked})}/>
+                      <div className="w-10 h-5 bg-white/5 border border-white/10 peer-checked:bg-cyan-600 rounded-full transition-all shadow-inner"></div>
+                      <div className="absolute left-1 top-1 w-3 h-3 bg-white rounded-full transition-all peer-checked:translate-x-5 shadow-md pointer-events-none"></div>
+                    </div>
                   </label>
 
                   <label className="flex items-center justify-between cursor-pointer group">
@@ -650,8 +668,23 @@ export default function App() {
                       <span className="text-[11px] font-black text-white uppercase tracking-wider group-hover:text-cyan-500 transition-colors">Skip Existing Files</span>
                       <span className="text-[9px] text-gray-600 font-bold uppercase tracking-[0.05em]">Prevent overwriting of output files</span>
                     </div>
-                    <input type="checkbox" className="sr-only peer" checked={globalSetting.skip_existing} onChange={e=>setGlobalSetting({...globalSetting, skip_existing: e.target.checked})}/>
-                    <div className="w-9 h-4.5 bg-white/5 border border-white/10 peer-checked:bg-cyan-600 rounded-full relative transition-all shadow-inner"><div className="absolute left-0.5 top-0.5 w-3 h-3 bg-white rounded-full transition-all peer-checked:left-5 shadow-md"></div></div>
+                    <div className="relative w-10 h-5">
+                      <input type="checkbox" className="sr-only peer" checked={globalSetting.skip_existing} onChange={e=>setGlobalSetting({...globalSetting, skip_existing: e.target.checked})}/>
+                      <div className="w-10 h-5 bg-white/5 border border-white/10 peer-checked:bg-cyan-600 rounded-full transition-all shadow-inner"></div>
+                      <div className="absolute left-1 top-1 w-3 h-3 bg-white rounded-full transition-all peer-checked:translate-x-5 shadow-md pointer-events-none"></div>
+                    </div>
+                  </label>
+
+                  <label className="flex items-center justify-between cursor-pointer group">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[11px] font-black text-white uppercase tracking-wider group-hover:text-cyan-500 transition-colors">Auto Deinterlace</span>
+                      <span className="text-[9px] text-gray-600 font-bold uppercase tracking-[0.05em]">Globally auto-detect interlaced video</span>
+                    </div>
+                    <div className="relative w-10 h-5">
+                      <input type="checkbox" className="sr-only peer" checked={globalSetting.deinterlace} onChange={e=>setGlobalSetting({...globalSetting, deinterlace: e.target.checked})}/>
+                      <div className="w-10 h-5 bg-white/5 border border-white/10 peer-checked:bg-cyan-600 rounded-full transition-all shadow-inner"></div>
+                      <div className="absolute left-1 top-1 w-3 h-3 bg-white rounded-full transition-all peer-checked:translate-x-5 shadow-md pointer-events-none"></div>
+                    </div>
                   </label>
                 </div>
               </div>

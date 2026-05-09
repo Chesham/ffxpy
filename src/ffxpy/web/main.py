@@ -1,23 +1,24 @@
 import asyncio
 import json
-import re
 import tempfile
 import uuid
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, Coroutine, Dict, List
+from typing import Any, Dict, List
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
+from rich.console import Console
 
 from ffxpy.const import Command
 from ffxpy.models.flow import Flow, FlowJob
-from ffxpy.probe import probe_video
+from ffxpy.probe import detect_interlacing_heavily, is_interlaced, probe_video
 from ffxpy.runner import run_ffmpeg
 from ffxpy.setting import Setting
 
 app = FastAPI(title='ffxpy Web API')
+console = Console()
 UI_DIST_DIR = Path(__file__).parent / 'ui' / 'dist'
 
 app.add_middleware(
@@ -72,6 +73,7 @@ async def get_keyframes(path: str, time: float = -1.0, range_sec: float = 2.0):
         raise HTTPException(status_code=404)
 
     import hashlib
+
     path_hash = hashlib.md5(str(video_path.resolve()).encode()).hexdigest()
 
     if time < 0:
@@ -79,18 +81,36 @@ async def get_keyframes(path: str, time: float = -1.0, range_sec: float = 2.0):
         if path_hash in keyframes_cache:
             return {'keyframes': keyframes_cache[path_hash]}
         cmd = [
-            settings.ffprobe_path, '-v', 'error', '-skip_frame', 'nokey',
-            '-select_streams', 'v:0', '-show_entries', 'frame=pts_time',
-            '-of', 'json', str(video_path)
+            settings.ffprobe_path,
+            '-v',
+            'error',
+            '-skip_frame',
+            'nokey',
+            '-select_streams',
+            'v:0',
+            '-show_entries',
+            'frame=pts_time',
+            '-of',
+            'json',
+            str(video_path),
         ]
     else:
         # Precise local scan
         start = max(0.0, time - range_sec)
         end = time + range_sec
         cmd = [
-            settings.ffprobe_path, '-v', 'error', '-select_streams', 'v:0',
-            '-show_entries', 'frame=best_effort_timestamp_time,key_frame',
-            '-read_intervals', f'{start}%{end}', '-of', 'json', str(video_path)
+            settings.ffprobe_path,
+            '-v',
+            'error',
+            '-select_streams',
+            'v:0',
+            '-show_entries',
+            'frame=best_effort_timestamp_time,key_frame',
+            '-read_intervals',
+            f'{start}%{end}',
+            '-of',
+            'json',
+            str(video_path),
         ]
 
     process = await asyncio.create_subprocess_exec(
@@ -128,15 +148,24 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
 
     try:
         flow = Flow.model_validate(request_data)
+        console.print(
+            f'[bold green]Flow Initialized:[/bold green] {len(flow.jobs)} jobs, '
+            f'global deinterlace={flow.setting.deinterlace}'
+        )
         res_cleanup = set()
         total_jobs = len(flow.jobs)
         job_ratios: Dict[int, float] = {i: 0.0 for i in range(total_jobs)}
         progress_lock = asyncio.Lock()
 
         job_durations: List[float] = []
-        for job in flow.jobs:
+        job_filters: List[List[str]] = []
+        for index, job in enumerate(flow.jobs):
             w = 1.0
+            detected_filters = []
+            job_name = job.name or f'Job #{index + 1}'
             if job.command == Command.SPLIT:
+                if not job.setting.input_path:
+                    raise ValueError(f'"{job_name}" has no input path')
                 try:
                     info = await probe_video(
                         job.setting.input_path, ffprobe_path=settings.ffprobe_path
@@ -144,22 +173,66 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
                     s = job.setting.start or timedelta(0)
                     e = job.setting.end or info.duration
                     w = max(0.1, (e - s).total_seconds())
-                except Exception:
+
+                    if job.setting.deinterlace:
+                        # Log the metadata detection result
+                        fo = info.streams[0].field_order if info.streams else 'unknown'
+                        if is_interlaced(info):
+                            console.print(
+                                f'[yellow]Interlaced detected for "{job_name}" '
+                                f'(Metadata: {fo}), applying yadif...[/yellow]'
+                            )
+                            detected_filters.append('yadif')
+                        else:
+                            # Metadata says progressive/unknown, try heavy detection
+                            is_interlaced_heavy = await detect_interlacing_heavily(
+                                job.setting.input_path, ffmpeg_path=settings.ffmpeg_path
+                            )
+                            if is_interlaced_heavy:
+                                console.print(
+                                    f'[yellow]Interlacing detected for "{job_name}" '
+                                    'via frame analysis, applying yadif...[/yellow]'
+                                )
+                                detected_filters.append('yadif')
+                            else:
+                                console.print(
+                                    f'[blue]Video "{job_name}" detected as {fo}, '
+                                    'frame analysis negative. '
+                                    'Skipping deinterlace.[/blue]'
+                                )
+                except Exception as e:
+                    console.print(f'[red]Validation error for "{job_name}":[/red] {e}')
                     w = 1.0
             elif job.command == Command.MERGE:
                 try:
                     m_w = 0.0
                     for p in job.setting.merge_paths:
-                        probe = await probe_video(p, settings.ffprobe_path)
-                        m_w += probe.duration.total_seconds()
+                        if not p.exists():
+                            # If file doesn't exist yet, it's likely a temporary
+                            # file from previous jobs
+                            continue
+                        info = await probe_video(p, settings.ffprobe_path)
+                        m_w += info.duration.total_seconds()
+                        if job.setting.deinterlace and 'yadif' not in detected_filters:
+                            if is_interlaced(info) or await detect_interlacing_heavily(
+                                p, ffmpeg_path=settings.ffmpeg_path
+                            ):
+                                console.print(
+                                    f'[yellow]Interlaced detected for "{job_name}", '
+                                    'applying yadif...[/yellow]'
+                                )
+                                detected_filters.append('yadif')
                     w = max(1.0, m_w)
-                except Exception:
+                except Exception as e:
+                    console.print(f'[red]Validation error for "{job_name}":[/red] {e}')
                     w = 10.0
             job_durations.append(w)
+            job_filters.append(detected_filters)
 
         async def run_single_job(index: int, job: FlowJob):
             job_name = job.name or f'Job #{index + 1}'
             weight = job_durations[index]
+            filters = job_filters[index]
             before_inputs = {}
             if job.command == Command.MERGE:
                 before_inputs = {'-f': 'concat', '-safe': '0'}
@@ -174,28 +247,31 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
             input_path = job.setting.input_path or Path('temp.mp4')
             output_path = job.setting.output_path or Path('out.mp4')
             args = compile_commandline(
-                job.setting, input_path, output_path, before_inputs=before_inputs
+                job.setting,
+                input_path,
+                output_path,
+                before_inputs=before_inputs,
+                filters=filters,
             )
 
-            async def progress_callback(
-                data: Dict[str, Any]
-            ) -> Coroutine[Any, Any, None]:
+            async def progress_callback(data: Dict[str, Any]) -> None:
                 if data['status'] == 'processing':
                     cur_p = data.get('completed', 0.0)
                     ratio = min(1.0, cur_p / weight) if weight > 0 else 1.0
                     async with progress_lock:
                         job_ratios[index] = ratio
                         overall = sum(job_ratios.values()) / total_jobs
-                        data.update({
-                            'overall_total': 1.0,
-                            'overall_completed': overall,
-                            'job_index': index,
-                            'total_jobs': total_jobs,
-                            'completed': ratio * 100,
-                            'total': 100
-                        })
+                        data.update(
+                            {
+                                'overall_total': 1.0,
+                                'overall_completed': overall,
+                                'job_index': index,
+                                'total_jobs': total_jobs,
+                                'completed': ratio * 100,
+                                'total': 100,
+                            }
+                        )
                     await queue.put(data)
-                return None  # type: ignore
 
             initial_msg = {
                 'status': 'processing',
@@ -204,7 +280,7 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
                 'total': 100,
                 'job_name': job_name,
                 'overall_total': 1.0,
-                'overall_completed': sum(job_ratios.values()) / total_jobs
+                'overall_completed': sum(job_ratios.values()) / total_jobs,
             }
             await queue.put(initial_msg)
 
@@ -213,26 +289,28 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
                 dry_run=flow.setting.dry_run,
                 total_duration=timedelta(seconds=weight),
                 job_name=job_name,
-                on_progress=progress_callback
+                on_progress=progress_callback,
             )
             if not success:
                 async with progress_lock:
-                    await queue.put({
-                        'status': 'failed', 'job_name': job_name, 'job_index': index
-                    })
+                    await queue.put(
+                        {'status': 'failed', 'job_name': job_name, 'job_index': index}
+                    )
                 raise RuntimeError(f'Job {job_name} failed')
 
             async with progress_lock:
                 job_ratios[index] = 1.0
                 overall = sum(job_ratios.values()) / total_jobs
-                await queue.put({
-                    'status': 'job_done',
-                    'job_name': job_name,
-                    'job_index': index,
-                    'overall_total': 1.0,
-                    'overall_completed': overall,
-                    'total_jobs': total_jobs
-                })
+                await queue.put(
+                    {
+                        'status': 'job_done',
+                        'job_name': job_name,
+                        'job_index': index,
+                        'overall_total': 1.0,
+                        'overall_completed': overall,
+                        'total_jobs': total_jobs,
+                    }
+                )
 
         semaphore = asyncio.Semaphore(flow.setting.concurrency)
 
@@ -241,25 +319,23 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
                 return await run_single_job(i, j)
 
         splits = [
-            sem_run(i, j) for i, j in enumerate(flow.jobs)
-            if j.command == Command.SPLIT
+            sem_run(i, j) for i, j in enumerate(flow.jobs) if j.command == Command.SPLIT
         ]
         if splits:
             await asyncio.gather(*splits)
 
-        merges = [
-            (i, j) for i, j in enumerate(flow.jobs)
-            if j.command == Command.MERGE
-        ]
+        merges = [(i, j) for i, j in enumerate(flow.jobs) if j.command == Command.MERGE]
         for i, j in merges:
             await run_single_job(i, j)
 
-        await queue.put({
-            'status': 'finished',
-            'overall_total': 1.0,
-            'overall_completed': 1.0,
-            'total_jobs': total_jobs
-        })
+        await queue.put(
+            {
+                'status': 'finished',
+                'overall_total': 1.0,
+                'overall_completed': 1.0,
+                'total_jobs': total_jobs,
+            }
+        )
     except asyncio.CancelledError:
         await queue.put({'status': 'failed', 'error': 'Cancelled by user'})
         raise
@@ -286,7 +362,7 @@ async def execute_task(request: Request):
     def cleanup_task(t: asyncio.Task):
         if job_id in running_tasks:
             del running_tasks[job_id]
-    
+
     task.add_done_callback(cleanup_task)
     return {'job_id': job_id}
 
@@ -319,13 +395,16 @@ async def get_events(job_id: str):
             await asyncio.sleep(2)
             if job_id in active_jobs:
                 del active_jobs[job_id]
+
     return StreamingResponse(event_generator(), media_type='text/event-stream')
 
 
 if UI_DIST_DIR.exists():
     from fastapi.staticfiles import StaticFiles
+
     app.mount('/', StaticFiles(directory=str(UI_DIST_DIR), html=True), name='ui')
 
 if __name__ == '__main__':
     import uvicorn
+
     uvicorn.run(app, host='0.0.0.0', port=8000)
