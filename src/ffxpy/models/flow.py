@@ -68,7 +68,28 @@ class Flow(pydantic.BaseModel):
                         ],
                     )
 
+                if job.command == Command.CROP:
+                    job.setting = crop_normalize(job.setting)
+
         return self
+
+
+def crop_normalize(setting: Setting):
+    input_path = setting.input_path
+    if not input_path:
+        return setting
+
+    output_path = setting.output_path
+    if not output_path:
+        output_path = input_path.with_stem(f'{input_path.stem}_cropped')
+
+    if setting.output_dir:
+        output_path = setting.output_dir / output_path.name
+    elif setting.working_dir:
+        output_path = setting.working_dir / output_path.name
+
+    setting.output_path = output_path
+    return setting
 
 
 def split_normalize(setting: Setting):

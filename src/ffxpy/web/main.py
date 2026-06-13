@@ -203,6 +203,27 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
                 except Exception as e:
                     console.print(f'[red]Validation error for "{job_name}":[/red] {e}')
                     w = 1.0
+            elif job.command == Command.CROP:
+                if not job.setting.input_path:
+                    raise ValueError(f'"{job_name}" has no input path')
+                try:
+                    info = await probe_video(
+                        job.setting.input_path, ffprobe_path=settings.ffprobe_path
+                    )
+                    w = max(0.1, info.duration.total_seconds())
+
+                    if job.setting.deinterlace:
+                        if is_interlaced(info) or await detect_interlacing_heavily(
+                            job.setting.input_path, ffmpeg_path=settings.ffmpeg_path
+                        ):
+                            console.print(
+                                f'[yellow]Interlaced detected for "{job_name}", '
+                                'applying yadif...[/yellow]'
+                            )
+                            detected_filters.append('yadif')
+                except Exception as e:
+                    console.print(f'[red]Validation error for "{job_name}":[/red] {e}')
+                    w = 1.0
             elif job.command == Command.MERGE:
                 try:
                     m_w = 0.0
@@ -241,7 +262,9 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
                     job.setting.input_path.write_text(''.join(lines))
                     res_cleanup.add(job.setting.input_path)
 
-            if job.command == Command.SPLIT and job.setting.output_path:
+            if (
+                job.command == Command.SPLIT or job.command == Command.CROP
+            ) and job.setting.output_path:
                 res_cleanup.add(job.setting.output_path)
 
             input_path = job.setting.input_path or Path('temp.mp4')
@@ -318,11 +341,13 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
             async with semaphore:
                 return await run_single_job(i, j)
 
-        splits = [
-            sem_run(i, j) for i, j in enumerate(flow.jobs) if j.command == Command.SPLIT
+        encoding_jobs = [
+            sem_run(i, j)
+            for i, j in enumerate(flow.jobs)
+            if j.command in [Command.SPLIT, Command.CROP]
         ]
-        if splits:
-            await asyncio.gather(*splits)
+        if encoding_jobs:
+            await asyncio.gather(*encoding_jobs)
 
         merges = [(i, j) for i, j in enumerate(flow.jobs) if j.command == Command.MERGE]
         for i, j in merges:

@@ -52,6 +52,7 @@ class Setting(pydantic_settings.BaseSettings):
     with_suffix: bool = True
     with_split: bool = True
     scale: str | None = None
+    crop: str | None = None
     merge_paths: list[Path] = pydantic.Field(default_factory=list)
     keep_temp: bool = False
     skip_validation: bool = False
@@ -93,6 +94,14 @@ class Setting(pydantic_settings.BaseSettings):
             raise ValueError(f'ffprobe not found at: {self.ffprobe_path}')
         if not os.access(self.ffprobe_path, os.X_OK):
             raise ValueError(f'ffprobe at {self.ffprobe_path} is not executable')
+
+        # Smart Codec Switching: crop or scale requires re-encoding, cannot use 'copy'
+        if self.crop or self.scale:
+            if self.video_codec == 'copy':
+                self.video_codec = 'libx264'
+                # Ensure a default bitrate if we auto-switched
+                if not self.video_bitrate:
+                    self.video_bitrate = '5M'
 
         if self.video_codec != 'copy' and not self.video_bitrate:
             raise ValueError('video_bitrate must be set when video_codec is not "copy"')

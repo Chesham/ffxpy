@@ -159,6 +159,22 @@ async def split(
         None,
         help='Audio codec.',
     ),
+    video_bitrate: str = typer.Option(
+        None,
+        help='Video bitrate.',
+    ),
+    audio_bitrate: str = typer.Option(
+        None,
+        help='Audio bitrate.',
+    ),
+    crop: str = typer.Option(
+        None,
+        help='Crop area (w:h:x:y).',
+    ),
+    scale: str = typer.Option(
+        None,
+        help='Scale (w:h).',
+    ),
     with_suffix: bool = typer.Option(
         True,
         '--no-suffix',
@@ -174,6 +190,10 @@ async def split(
         setting.video_codec = video_codec
     if audio_codec:
         setting.audio_codec = audio_codec
+    if video_bitrate:
+        setting.video_bitrate = video_bitrate
+    if audio_bitrate:
+        setting.audio_bitrate = audio_bitrate
     setting.with_suffix = with_suffix
 
     # Validate input video range
@@ -233,12 +253,14 @@ async def split(
     args = compile_commandline(
         setting, input_path, output_path, filters=detected_filters
     )
-    await run_ffmpeg(
+    success = await run_ffmpeg(
         args,
         dry_run=setting.dry_run,
         total_duration=job_duration,
         job_name=f'Splitting {input_path.name}',
     )
+    if not success and not setting.dry_run:
+        raise typer.Exit(code=1)
 
 
 @app.async_command(no_args_is_help=True)
@@ -384,7 +406,81 @@ async def merge(
 
     # For merge, we don't easily know the total duration without probing all parts
     # For now, let's just run it without a specific duration
-    await run_ffmpeg(args, dry_run=setting.dry_run, job_name='Merging files')
+    success = await run_ffmpeg(args, dry_run=setting.dry_run, job_name='Merging files')
+    if not success and not setting.dry_run:
+        raise typer.Exit(code=1)
+
+
+@app.async_command(no_args_is_help=True)
+async def crop(
+    ctx_: typer.Context,
+    input_path: Path = typer.Argument(
+        help='Input video file path.',
+        parser=Path,
+        metavar='TEXT',
+    ),
+    crop: str = typer.Option(
+        ...,
+        help='Crop area (w:h:x:y).',
+    ),
+    video_codec: str = typer.Option(
+        None,
+        help='Video codec.',
+    ),
+    audio_codec: str = typer.Option(
+        None,
+        help='Audio codec.',
+    ),
+    video_bitrate: str = typer.Option(
+        None,
+        help='Video bitrate.',
+    ),
+    audio_bitrate: str = typer.Option(
+        None,
+        help='Audio bitrate.',
+    ),
+):
+    ctx = solve_context(ctx_)
+    setting = ctx.setting
+    setting.crop = crop
+    if video_codec:
+        setting.video_codec = video_codec
+    if audio_codec:
+        setting.audio_codec = audio_codec
+    if video_bitrate:
+        setting.video_bitrate = video_bitrate
+    if audio_bitrate:
+        setting.audio_bitrate = audio_bitrate
+
+    detected_filters = []
+    try:
+        info = await probe_video(input_path, ffprobe_path=setting.ffprobe_path)
+        # TODO: Validate crop area against info.width/height if needed
+    except Exception as e:
+        console.print(f'[red]Error validating input:[/red] {e}')
+        raise typer.Exit(code=1)
+
+    output_path = setting.output_path
+    if not output_path:
+        # Default output path for crop
+        output_path = input_path.with_stem(f'{input_path.stem}_cropped')
+
+    if setting.working_dir and not output_path.is_absolute():
+        output_path = setting.working_dir / output_path.name
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    args = compile_commandline(
+        setting, input_path, output_path, filters=detected_filters
+    )
+    success = await run_ffmpeg(
+        args,
+        dry_run=setting.dry_run,
+        total_duration=info.duration,
+        job_name=f'Cropping {input_path.name}',
+    )
+    if not success and not setting.dry_run:
+        raise typer.Exit(code=1)
 
 
 @app.async_command()
@@ -525,6 +621,18 @@ async def flow(
                     actual_start = job.setting.start or timedelta(0)
                     actual_end = job.setting.end or info.duration
                     job_duration = actual_end - actual_start
+                except Exception as e:
+                    console.print(f'[red]Validation failed for "{job_name}":[/red] {e}')
+                    raise typer.Exit(code=1)
+            elif job.command == Command.CROP:
+                if not job.setting.input_path:
+                    raise ValueError(f'job {job_name} has no input path')
+                try:
+                    info = await probe_video(
+                        job.setting.input_path, ffprobe_path=job.setting.ffprobe_path
+                    )
+                    job_duration = info.duration
+                    # TODO: Add crop boundary validation here if possible
                 except Exception as e:
                     console.print(f'[red]Validation failed for "{job_name}":[/red] {e}')
                     raise typer.Exit(code=1)
@@ -742,7 +850,7 @@ async def flow(
                         update_overall_metrics()
                         continue
 
-                    await run_ffmpeg(
+                    success = await run_ffmpeg(
                         args,
                         dry_run=setting.dry_run,
                         total_duration=job_duration,
@@ -750,6 +858,8 @@ async def flow(
                         progress=progress,
                         master_task_id=master_task_id,
                     )
+                    if not success and not setting.dry_run:
+                        raise RuntimeError(f'Job "{job_name}" failed')
                     completed_jobs += 1
                     update_overall_metrics()
                 else:
@@ -757,9 +867,13 @@ async def flow(
                     pending_tasks.append(task)
 
             if pending_tasks:
-                await asyncio.gather(*pending_tasks)
-    except (Exception, asyncio.CancelledError):
+                results = await asyncio.gather(*pending_tasks)
+                if any(r is False for r in results) and not setting.dry_run:
+                    raise RuntimeError('One or more parallel jobs failed')
+    except (Exception, asyncio.CancelledError) as e:
         await cancel_pending_tasks()
+        if not isinstance(e, asyncio.CancelledError):
+            console.print(f'[red]Flow failed:[/red] {e}')
         raise typer.Exit(code=1)
     finally:
         if not flow_data.setting.keep_temp:
@@ -779,7 +893,9 @@ async def flow(
 async def exec(ctx_: typer.Context):
     ctx = solve_context(ctx_)
     args = [ctx.setting.ffmpeg_path, *ctx_.args]
-    await run_ffmpeg(args, dry_run=ctx.setting.dry_run, job_name='Direct execution')
+    success = await run_ffmpeg(args, dry_run=ctx.setting.dry_run, job_name='Direct execution')
+    if not success and not ctx.setting.dry_run:
+        raise typer.Exit(code=1)
 
 
 def compile_commandline(
@@ -844,6 +960,8 @@ def compile_commandline(
     final_filters = filters[:] if filters else []
     if setting.scale:
         final_filters.append(f'scale={setting.scale}')
+    if setting.crop:
+        final_filters.append(f'crop={setting.crop}')
 
     if final_filters:
         args += ['-vf', ','.join(final_filters)]

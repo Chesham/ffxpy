@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { 
   Loader2, CheckCircle2, Plus, ChevronLeft, ChevronRight, 
   Settings2, Clock, Code, LocateFixed, 
@@ -12,9 +12,174 @@ function cn(...inputs: ClassValue[]) { return twMerge(clsx(inputs)) }
 const API_BASE = 'http://localhost:8000'
 const normalizePath = (p: string) => p.replace(/\\/g, '/')
 
-interface VideoInfo { format_name: string; duration: string; duration_sec: number }
-interface JobSetting { start?: string; end?: string; video_codec?: string; video_bitrate?: string; audio_codec?: string; audio_bitrate?: string; scale?: string; output_dir?: string; output_path?: string; keep_temp?: boolean; skip_existing?: boolean; deinterlace?: boolean }
-interface Job { id: string; name: string; command: 'split' | 'merge'; setting: JobSetting }
+function VisualCropper({ 
+  videoRef, 
+  actualWidth, 
+  actualHeight, 
+  cropValue, 
+  onChange, 
+  isInherited 
+}: { 
+  videoRef: React.RefObject<HTMLVideoElement | null>, 
+  actualWidth: number, 
+  actualHeight: number, 
+  cropValue: string, 
+  onChange: (val: string) => void,
+  isInherited?: boolean
+}) {
+  const [rect, setRect] = useState({ x: 0, y: 0, w: actualWidth, h: actualHeight })
+  const overlayRef = useRef<SVGSVGElement>(null)
+  const [dragMode, setDragMode] = useState<'move' | 'resize' | null>(null)
+  const [startPos, setStartPos] = useState({ x: 0, y: 0, rect: { x: 0, y: 0, w: 0, h: 0 } })
+  const [metrics, setMetrics] = useState({ sx: 1, sy: 1, offsetX: 0, offsetY: 0 })
+
+  // Parse cropValue (w:h:x:y)
+  useEffect(() => {
+    if (cropValue) {
+      const [w, h, x, y] = cropValue.split(':').map(Number)
+      if (!isNaN(w) && !isNaN(h) && !isNaN(x) && !isNaN(y)) {
+        const timer = setTimeout(() => setRect({ x, y, w, h }), 0)
+        return () => clearTimeout(timer)
+      }
+    } else {
+        const timer = setTimeout(() => setRect({ x: 0, y: 0, w: actualWidth, h: actualHeight }), 0)
+        return () => clearTimeout(timer)
+    }
+  }, [cropValue, actualWidth, actualHeight])
+
+  const updateMetrics = useCallback(() => {
+    if (!videoRef.current) return
+    const v = videoRef.current
+    const vRect = v.getBoundingClientRect()
+    
+    // Video aspect ratio
+    const videoRatio = actualWidth / actualHeight
+    const containerRatio = vRect.width / vRect.height
+    
+    let displayW, displayH, offsetX = 0, offsetY = 0
+    if (containerRatio > videoRatio) {
+      displayH = vRect.height
+      displayW = displayH * videoRatio
+      offsetX = (vRect.width - displayW) / 2
+    } else {
+      displayW = vRect.width
+      displayH = displayW / videoRatio
+      offsetY = (vRect.height - displayH) / 2
+    }
+    
+    setMetrics({ 
+      sx: displayW / actualWidth, 
+      sy: displayH / actualHeight,
+      offsetX,
+      offsetY
+    })
+  }, [actualWidth, actualHeight, videoRef])
+
+  useEffect(() => {
+    updateMetrics()
+    window.addEventListener('resize', updateMetrics)
+    return () => window.removeEventListener('resize', updateMetrics)
+  }, [updateMetrics])
+
+  const handleMouseDown = (e: React.MouseEvent, mode: 'move' | 'resize') => {
+    e.stopPropagation()
+    setDragMode(mode)
+    setStartPos({ x: e.clientX, y: e.clientY, rect: { ...rect } })
+  }
+
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    if (!dragMode) return
+    const { sx, sy } = metrics
+    const dx = (e.clientX - startPos.x) / sx
+    const dy = (e.clientY - startPos.y) / sy
+
+    const nextRect = { ...startPos.rect }
+    if (dragMode === 'move') {
+      nextRect.x = Math.max(0, Math.min(actualWidth - nextRect.w, startPos.rect.x + dx))
+      nextRect.y = Math.max(0, Math.min(actualHeight - nextRect.h, startPos.rect.y + dy))
+    } else if (dragMode === 'resize') {
+      nextRect.w = Math.max(10, Math.min(actualWidth - nextRect.x, startPos.rect.w + dx))
+      nextRect.h = Math.max(10, Math.min(actualHeight - nextRect.y, startPos.rect.h + dy))
+    }
+
+    setRect(nextRect)
+    onChange(`${Math.round(nextRect.w)}:${Math.round(nextRect.h)}:${Math.round(nextRect.x)}:${Math.round(nextRect.y)}`)
+  }, [dragMode, metrics, startPos, actualWidth, actualHeight, onChange])
+
+  const handleMouseUp = useCallback(() => setDragMode(null), [])
+
+  useEffect(() => {
+    if (dragMode) {
+      window.addEventListener('mousemove', handleMouseMove)
+      window.addEventListener('mouseup', handleMouseUp)
+    }
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [dragMode, handleMouseMove, handleMouseUp])
+
+  const { sx, sy, offsetX, offsetY } = metrics
+  
+  return (
+    <svg 
+      ref={overlayRef}
+      className="absolute inset-0 w-full h-full pointer-events-none z-30"
+      style={{ cursor: dragMode ? (dragMode === 'move' ? 'grabbing' : 'nwse-resize') : 'default' }}
+    >
+      <g transform={`translate(${offsetX}, ${offsetY}) scale(${sx}, ${sy})`}>
+        {/* Dimmed background */}
+        <path 
+          d={`M0,0 H${actualWidth} V${actualHeight} H0 Z M${rect.x},${rect.y} V${rect.y + rect.h} H${rect.x + rect.w} V${rect.y} Z`} 
+          fill="black" 
+          fillOpacity="0.5" 
+          fillRule="evenodd"
+          className="pointer-events-auto"
+        />
+        {/* Crop rectangle */}
+        <rect 
+          x={rect.x} 
+          y={rect.y} 
+          width={rect.w} 
+          height={rect.h} 
+          fill="transparent" 
+          stroke={isInherited ? "#06b6d480" : "#22d3ee"} 
+          strokeWidth={4 / sx}
+          strokeDasharray={isInherited ? "10,10" : "0"}
+          className="pointer-events-auto cursor-grab active:cursor-grabbing"
+          onMouseDown={e => handleMouseDown(e, 'move')}
+        />
+        {/* Resize handle */}
+        <rect 
+          x={rect.x + rect.w - 10 / sx} 
+          y={rect.y + rect.h - 10 / sy} 
+          width={20 / sx} 
+          height={20 / sy} 
+          fill="#22d3ee"
+          className="pointer-events-auto cursor-nwse-resize"
+          onMouseDown={e => handleMouseDown(e, 'resize')}
+        />
+        {/* Label */}
+        <text 
+            x={rect.x + 5 / sx} 
+            y={rect.y + 20 / sy} 
+            fill="white" 
+            fontSize={12 / sx} 
+            fontWeight="bold" 
+            className="select-none pointer-events-none shadow-black drop-shadow-md"
+        >
+            {Math.round(rect.w)}x{Math.round(rect.h)} ({Math.round(rect.x)},{Math.round(rect.y)})
+            {isInherited && " (Inherited)"}
+        </text>
+      </g>
+    </svg>
+  )
+}
+
+interface StreamInfo { index: number; codec_type: string; width?: number; height?: number }
+interface VideoInfo { format_name: string; duration: string; duration_sec: number; streams: StreamInfo[] }
+interface JobSetting { start?: string; end?: string; video_codec?: string; video_bitrate?: string; audio_codec?: string; audio_bitrate?: string; scale?: string; crop?: string; output_dir?: string; output_path?: string; keep_temp?: boolean; skip_existing?: boolean; deinterlace?: boolean }
+interface Job { id: string; name: string; command: 'split' | 'merge' | 'crop'; setting: JobSetting }
 interface JobStatus { status: string; completed: number; total: number; name?: string }
 interface WorkflowState { status: string; overall_completed: number; overall_total: number; total_jobs: number; jobStatuses: Record<number, JobStatus> }
 
@@ -27,6 +192,7 @@ interface GlobalSetting {
   skip_existing: boolean;
   deinterlace: boolean;
   output_dir: string;
+  crop?: string;
 }
 
 export default function App() {
@@ -37,7 +203,7 @@ export default function App() {
   const [activeJobId, setActiveJobId] = useState<string | null>(null)
   const [globalSetting, setGlobalSetting] = useState<GlobalSetting>(() => {
     const saved = localStorage.getItem('ffxpy_global_settings')
-    return saved ? JSON.parse(saved) : { video_codec: 'copy', audio_codec: 'copy', video_bitrate: '', overwrite: true, keep_temp: false, skip_existing: false, deinterlace: false, output_dir: '' }
+    return saved ? JSON.parse(saved) : { video_codec: 'copy', audio_codec: 'copy', video_bitrate: '', overwrite: true, keep_temp: false, skip_existing: false, deinterlace: false, output_dir: '', crop: '' }
   })
   const [yamlText, setYamlText] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -52,6 +218,7 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [tempVideoPath, setTempVideoPath] = useState('')
   const [isTyping, setIsTyping] = useState(false)
+  const [isCropMode, setIsCropMode] = useState(false)
   
   const videoRef = useRef<HTMLVideoElement>(null)
   const isSyncingFromYaml = useRef(false)
@@ -115,7 +282,7 @@ export default function App() {
   const handleCloseVideo = async () => {
     try {
       await fetch(`${API_BASE}/api/close`, { method: 'POST' })
-    } catch (e) {}
+    } catch { /* ignore */ }
     setVideoPath('')
     setVideoInfo(null)
     setJobs([])
@@ -146,6 +313,7 @@ export default function App() {
         keep_temp: globalSetting.keep_temp,
         skip_existing: globalSetting.skip_existing,
         deinterlace: globalSetting.deinterlace,
+        crop: globalSetting.crop,
         input_path: videoPath 
       }),
       jobs: jobs.map(j => {
@@ -255,9 +423,18 @@ export default function App() {
     }
   }
 
-  const addJob = (type: 'split' | 'merge') => {
+  const addJob = (type: 'split' | 'merge' | 'crop') => {
     const id = crypto.randomUUID().split('-')[0]
-    const newJob: Job = { id, name: `${type.toUpperCase()} #${jobs.length + 1}`, command: type, setting: type === 'split' ? { start: formatTime(currentTime), end: formatTime(videoInfo?.duration_sec || 0) } : { video_codec: 'copy' } }
+    const newJob: Job = { 
+      id, 
+      name: `${type.toUpperCase()} #${jobs.length + 1}`, 
+      command: type, 
+      setting: type === 'split' 
+        ? { start: formatTime(currentTime), end: formatTime(videoInfo?.duration_sec || 0) } 
+        : type === 'crop'
+        ? { video_codec: 'libx264', video_bitrate: '5M' }
+        : { video_codec: 'copy' } 
+    }
     setJobs([...jobs, newJob]); setActiveJobId(id)
   }
 
@@ -372,6 +549,27 @@ export default function App() {
                   setEstablishedMap({});
                 }}
                 controls /> : <div className="w-full h-full flex flex-col items-center justify-center opacity-[0.03]"><Film size={180} /></div>}
+              
+              {isCropMode && videoInfo && (
+                <VisualCropper 
+                  videoRef={videoRef}
+                  actualWidth={videoInfo.streams.find(s => s.codec_type === 'video')?.width || 1920}
+                  actualHeight={videoInfo.streams.find(s => s.codec_type === 'video')?.height || 1080}
+                  cropValue={
+                    isSettingsOpen 
+                      ? (globalSetting.crop || '') 
+                      : (activeJob?.setting.crop || globalSetting.crop || '')
+                  }
+                  isInherited={!isSettingsOpen && !activeJob?.setting.crop && !!globalSetting.crop}
+                  onChange={(val) => {
+                    if (isSettingsOpen) {
+                      setGlobalSetting({ ...globalSetting, crop: val })
+                    } else if (activeJob) {
+                      setJobs(jobs.map(x => x.id === activeJob.id ? { ...x, setting: { ...x.setting, crop: val } } : x))
+                    }
+                  }}
+                />
+              )}
            </div>
            <div className="bg-[#0e0e0e]/80 backdrop-blur-md p-5 rounded-3xl border border-white/[0.05] shadow-2xl shrink-0">
               <div className="flex items-center bg-white/[0.02] p-1 rounded-2xl border border-white/[0.03] w-full group/seek">
@@ -472,7 +670,7 @@ export default function App() {
                                <div className="text-gray-700 cursor-grab active:cursor-grabbing hover:text-cyan-500 transition-colors">
                                  <GripVertical size={16} />
                                </div>
-                               <div className="flex-1 flex justify-between items-center relative z-10"><div className="flex items-center gap-4">{isD ? <CheckCircle2 size={14} className="text-green-500"/> : isR ? <Loader2 size={14} className="text-cyan-500 animate-spin"/> : <div className={cn("w-6 h-6 flex items-center justify-center rounded-md font-black text-[9px] shadow-2xl", j.command==='split'?"bg-cyan-950 text-cyan-400":"bg-indigo-950 text-indigo-400")}>{i+1}</div>}<span className="text-xs font-black text-white uppercase tracking-tighter">{j.name}</span></div><button onClick={e=>{e.stopPropagation();setJobs(jobs.filter(x=>x.id!==j.id))}} className="opacity-0 group-hover:opacity-100 text-gray-700 hover:text-red-500 transition-opacity p-1"><X size={16}/></button></div>
+                               <div className="flex-1 flex justify-between items-center relative z-10"><div className="flex items-center gap-4">{isD ? <CheckCircle2 size={14} className="text-green-500"/> : isR ? <Loader2 size={14} className="text-cyan-500 animate-spin"/> : <div className={cn("w-6 h-6 flex items-center justify-center rounded-md font-black text-[9px] shadow-2xl", j.command==='split'?"bg-cyan-950 text-cyan-400":j.command==='crop'?"bg-amber-950 text-amber-400":"bg-indigo-950 text-indigo-400")}>{i+1}</div>}<span className="text-xs font-black text-white uppercase tracking-tighter">{j.name}</span></div><button onClick={e=>{e.stopPropagation();setJobs(jobs.filter(x=>x.id!==j.id))}} className="opacity-0 group-hover:opacity-100 text-gray-700 hover:text-red-500 transition-opacity p-1"><X size={16}/></button></div>
                                {isR && <div className="absolute bottom-0 left-0 h-[2px] bg-cyan-500 transition-all duration-300" style={{ width: `${Math.round((st.completed / st.total) * 100)}%` }} />}
                             </div>
 
@@ -481,15 +679,46 @@ export default function App() {
                                 <div className="flex justify-between items-center border-b border-white/[0.03] pb-3"><h4 className="text-[9px] font-black text-cyan-500 uppercase tracking-widest flex items-center gap-2"><Settings2 size={12}/> Properties</h4></div>
                                 <div className="space-y-5 text-[9px] uppercase font-black text-gray-500 tracking-wider">
                                     <div className="space-y-2"><label>Task Label</label><input className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2 text-xs text-white outline-none focus:border-cyan-500/30 font-normal transition-colors" value={activeJob.name} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,name:e.target.value}:x))} /></div>
-                                    {activeJob.command==='split' && (
+                                    {(activeJob.command==='split' || activeJob.command==='crop') && (
                                       <div className="grid grid-cols-2 gap-4 border-t border-white/[0.03] pt-5">
                                           <div className="space-y-2"><label className="text-cyan-600">In Point</label><div className="flex gap-1.5"><input className="flex-1 bg-black border border-white/[0.05] rounded-lg px-3 py-1.5 text-[11px] font-mono text-cyan-400 outline-none focus:border-cyan-500/30" value={activeJob.setting.start || ''} onChange={e => setJobs(prev => prev.map(x => x.id === activeJob.id ? {...x, setting: {...x.setting, start: e.target.value}} : x))}/><button onClick={()=>seekTo(parseTimeToSeconds(activeJob.setting.start))} className="p-1.5 bg-white/[0.03] rounded-lg hover:bg-white/[0.08] text-cyan-500 transition-colors"><LocateFixed size={12}/></button><button onClick={()=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,start:formatTime(currentTime)}}:x))} className="p-1.5 bg-white/[0.03] rounded-lg hover:bg-white/[0.08] text-white/50"><Clock size={12}/></button></div></div>
                                           <div className="space-y-2"><label className="text-red-600">Out Point</label><div className="flex gap-1.5"><input className="flex-1 bg-black border border-white/[0.05] rounded-lg px-3 py-1.5 text-[11px] font-mono text-red-400 outline-none focus:border-red-500/30" value={activeJob.setting.end || ''} onChange={e => setJobs(prev => prev.map(x => x.id === activeJob.id ? {...x, setting: {...x.setting, end: e.target.value}} : x))}/><button onClick={()=>seekTo(parseTimeToSeconds(activeJob.setting.end))} className="p-1.5 bg-white/[0.03] rounded-lg hover:bg-white/[0.08] text-red-500 transition-colors"><LocateFixed size={12}/></button><button onClick={()=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,end:formatTime(currentTime)}}:x))} className="p-1.5 bg-white/[0.03] rounded-lg hover:bg-white/[0.08] text-white/50"><Clock size={12}/></button></div></div>
                                       </div>
                                     )}
+
                                     <div className="grid grid-cols-2 gap-4 border-t border-white/[0.03] pt-5">
                                       <div className="space-y-2"><label>Video Codec</label><select className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2 text-xs text-white outline-none font-bold appearance-none cursor-pointer" value={activeJob.setting.video_codec||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,video_codec:e.target.value||undefined}}:x))}><option value="">Inherit</option><option value="copy">COPY</option><option value="libx264">H.264</option><option value="h264_nvenc">NVENC</option></select></div>
                                       <div className="space-y-2"><label>Target Bitrate</label><input className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2 text-xs text-white outline-none font-mono font-normal" placeholder="e.g. 12M" value={activeJob.setting.video_bitrate||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,video_bitrate:e.target.value||undefined}}:x))} /></div>
+                                    </div>
+                                    <div className="space-y-2 border-t border-white/[0.03] pt-5">
+                                      <div className="flex justify-between items-center mb-1">
+                                        <label>Crop Area (W:H:X:Y)</label>
+                                        <div className="flex gap-2">
+                                          {activeJob.setting.crop && (
+                                            <button 
+                                              onClick={() => setJobs(jobs.map(x => x.id === activeJob.id ? { ...x, setting: { ...x.setting, crop: undefined } } : x))}
+                                              className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md text-gray-500 hover:text-white transition-colors"
+                                            >
+                                              Reset
+                                            </button>
+                                          )}
+                                          <button 
+                                            onClick={() => setIsCropMode(!isCropMode)}
+                                            className={cn(
+                                              "text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-full transition-all border",
+                                              isCropMode ? "bg-amber-500 text-black border-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.3)]" : "bg-white/[0.03] text-gray-500 border-white/5 hover:bg-white/[0.08]"
+                                            )}
+                                          >
+                                            {isCropMode ? "✨ Active Mode" : "Select Area"}
+                                          </button>
+                                        </div>
+                                      </div>
+                                      <input 
+                                        className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2 text-xs text-cyan-400 outline-none focus:border-cyan-500/30 font-mono font-normal transition-colors" 
+                                        placeholder="e.g. 1920:1080:0:0" 
+                                        value={activeJob.setting.crop||''} 
+                                        onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,crop:e.target.value||undefined}}:x))} 
+                                      />
                                     </div>
                                     <div className="space-y-2 border-t border-white/[0.03] pt-6">
                                       <label className="flex items-center justify-between cursor-pointer group">
@@ -518,8 +747,9 @@ export default function App() {
                              <Plus size={18} /> New Job
                           </div>
                           <div className="absolute inset-0 flex opacity-0 group-hover:opacity-100 transition-all z-10 overflow-hidden rounded-2xl">
-                             <button onClick={() => addJob('split')} className="flex-1 bg-cyan-600 hover:bg-cyan-500 text-white font-black text-[13px] flex items-center justify-center gap-2 uppercase tracking-tight">✂️ Add Split</button>
-                             <button onClick={() => addJob('merge')} className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-black text-[13px] flex items-center justify-center gap-2 uppercase tracking-tight">🔗 Add Merge</button>
+                             <button onClick={() => addJob('split')} className="flex-1 bg-cyan-600 hover:bg-cyan-500 text-white font-black text-[13px] flex items-center justify-center gap-2 uppercase tracking-tight">✂️ Split</button>
+                             <button onClick={() => addJob('crop')} className="flex-1 bg-amber-600 hover:bg-amber-500 text-white font-black text-[13px] flex items-center justify-center gap-2 uppercase tracking-tight">🖼️ Crop</button>
+                             <button onClick={() => addJob('merge')} className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-black text-[13px] flex items-center justify-center gap-2 uppercase tracking-tight">🔗 Merge</button>
                           </div>
                        </div>
                     </div>
@@ -648,6 +878,16 @@ export default function App() {
                       onChange={e => setGlobalSetting({...globalSetting, video_bitrate: e.target.value})}
                     />
                   </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Global Crop Area (W:H:X:Y)</label>
+                  <input 
+                    className="w-full bg-black border border-white/[0.05] rounded-2xl px-5 py-4 text-xs text-cyan-400 outline-none focus:border-cyan-500/30 font-mono transition-colors" 
+                    placeholder="e.g. 1920:1080:0:0" 
+                    value={globalSetting.crop || ''} 
+                    onChange={e => setGlobalSetting({...globalSetting, crop: e.target.value})}
+                  />
                 </div>
 
                 <div className="flex flex-col gap-5 pt-2">

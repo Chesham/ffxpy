@@ -66,6 +66,11 @@ uv run ffx [OPTIONS] COMMAND [ARGS]...
     uv run ffx merge --with-split
     ```
 
+*   **`crop`**: Crops a video file.
+    ```bash
+    uv run ffx crop <INPUT_FILE> --crop <W:H:X:Y> --video-codec libx264 --video-bitrate 5M -o <OUTPUT_FILE>
+    ```
+
 *   **`flow`**: Executes a workflow defined in a YAML file.
     ```bash
     uv run ffx flow <PATH_TO_FLOW.YML>
@@ -103,6 +108,12 @@ jobs:
 *   **Testing:** The project uses `behave` and `grappa` for Behavior-Driven Development (BDD). Feature files are located in the `features/` directory.
 *   **Progress Tracking:** Real-time progress is displayed using `rich`. The `flow` command features a smooth overall progress bar based on total job durations.
 *   **Quality Enforcement:** ALWAYS run `uv run ruff check .` and `uv run mypy .` after any code modification to ensure linting and type safety.
+
+## Agent Communication Protocol
+
+For clarity and consistency, the following protocol should be observed when interacting with the agent:
+- **File Modifications:** All changes made to project files (e.g., code, documentation, configuration) must be in English.
+- **Agent Responses:** All responses from the agent to the user should be in Traditional Chinese.ting and type safety.
 
 ## Agent Communication Protocol
 
