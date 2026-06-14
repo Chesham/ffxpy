@@ -19,13 +19,29 @@ class AsyncTyper(typer.Typer):
         def decorator(async_func):
             @wraps(async_func)
             def sync_func(*_args, **_kwargs):
-                async def wrapped():
+                # Try to get the context safely
+                ctx = None
+                try:
                     ctx = click.get_current_context()
-                    await self.run_event_handlers('startup', ctx)
-                    try:
+                except (RuntimeError, AttributeError):
+                    # Try to find it in arguments (Typer might have passed it)
+                    for arg in _args:
+                        if isinstance(arg, click.Context):
+                            ctx = arg
+                            break
+
+                async def wrapped():
+                    # Re-push context inside the async loop (important for Windows/Asyncio)
+                    if ctx:
+                        with ctx:
+                            await self.run_event_handlers('startup', ctx)
+                            try:
+                                return await async_func(*_args, **_kwargs)
+                            finally:
+                                await self.run_event_handlers('shutdown', ctx)
+                    else:
+                        # Fallback if no context is found
                         return await async_func(*_args, **_kwargs)
-                    finally:
-                        await self.run_event_handlers('shutdown', ctx)
 
                 return asyncio.run(wrapped())
 
