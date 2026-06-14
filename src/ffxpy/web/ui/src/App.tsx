@@ -221,6 +221,7 @@ export default function App() {
   const [isCropMode, setIsCropMode] = useState(false)
   
   const videoRef = useRef<HTMLVideoElement>(null)
+  const settingsInputRef = useRef<HTMLInputElement>(null)
   const isSyncingFromYaml = useRef(false)
 
   const handleDragStart = (idx: number) => {
@@ -245,7 +246,7 @@ export default function App() {
     if (videoRef.current) videoRef.current.currentTime = val
   }
 
-  const handleProbe = async (path: string) => {
+  const handleProbe = useCallback(async (path: string) => {
     if (!path) return
     setIsSubmitting(true); setError(null)
     try {
@@ -265,19 +266,43 @@ export default function App() {
       setEditTime(formatTime(0))
       setKeyframes([])
     } catch (e: unknown) { setError(e instanceof Error ? e.message : String(e)) } finally { setIsSubmitting(false) }
-  }
+  }, [])
 
-  const openSettings = () => {
+  const openSettings = useCallback(() => {
     setTempVideoPath(videoPath)
     setIsSettingsOpen(true)
-  }
+  }, [videoPath])
 
-  const applySettings = () => {
+  const applySettings = useCallback(() => {
     if (tempVideoPath !== videoPath) {
       handleProbe(tempVideoPath)
     }
     setIsSettingsOpen(false)
-  }
+  }, [tempVideoPath, videoPath, handleProbe])
+
+  useEffect(() => {
+    if (isSettingsOpen) {
+      // Small timeout to ensure the drawer animation/render is processed
+      const timer = setTimeout(() => settingsInputRef.current?.focus(), 100)
+      return () => clearTimeout(timer)
+    }
+  }, [isSettingsOpen])
+
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isSettingsOpen) {
+        setIsSettingsOpen(false)
+        return
+      }
+      if (isTyping) return
+      if (e.key.toLowerCase() === 's' && e.altKey) {
+        e.preventDefault()
+        openSettings()
+      }
+    }
+    window.addEventListener('keydown', handleGlobalKeyDown)
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown)
+  }, [isTyping, isSettingsOpen, openSettings])
 
   const handleCloseVideo = async () => {
     try {
@@ -815,10 +840,12 @@ export default function App() {
       )}
       {isSettingsOpen && (
         <div className="fixed inset-0 z-[110] flex items-end justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-300" onClick={() => setIsSettingsOpen(false)}>
-          <div 
+          <div
             className="w-full bg-[#0c0c0c] border-t border-white/[0.05] rounded-t-[3rem] shadow-[0_-20px_50px_rgba(0,0,0,0.5)] p-10 space-y-8 animate-in slide-in-from-bottom duration-500"
             onClick={e => e.stopPropagation()}
+            onKeyDown={e => e.key === 'Enter' && applySettings()}
           >
+
             <div className="flex justify-between items-center">
               <div className="flex flex-col gap-1">
                 <h3 className="text-base font-black uppercase tracking-[0.4em] text-white flex items-center gap-3"><Settings2 size={18} className="text-cyan-500"/> Flow Settings</h3>
@@ -833,13 +860,14 @@ export default function App() {
                   <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Input Video Path</label>
                   <div className="flex gap-3">
                     <input 
+                      ref={settingsInputRef}
                       className="flex-1 bg-black border border-white/[0.05] rounded-2xl px-5 py-4 text-xs text-white outline-none focus:border-cyan-500/30 font-mono transition-colors" 
                       placeholder="e.g. /path/to/video.mp4" 
                       value={tempVideoPath} 
-                      onChange={e => setTempVideoPath(normalizePath(e.target.value))}
-                      onKeyDown={e => e.key === 'Enter' && applySettings()}
+                      onChange={e => setTempVideoPath(normalizePath(e.target.value))} 
                     />
                   </div>
+
                   <p className="text-[9px] text-gray-700 italic">Changing this path will reset all current jobs and timeline progress.</p>
                 </div>
 
