@@ -1,5 +1,26 @@
 # CHANGELOG
 
+## 🚀 [0.4.0] - 2026-06-14
+
+### ✨ Core Features
+- 🖼️ **Visual Cropping**: Integrated an interactive cropping tool into the Web UI with precise coordinate mapping.
+- 🎨 **Unified Workflow Studio**: Delivered a professional React-based Web UI for visual timeline editing, keyframe snapping, and job management.
+- 🧠 **Smart Codec Switching**: Automatically upgrades `copy` to `libx264` when filters (crop/scale) are present, ensuring seamless execution.
+- ✂️ **Feature Unification**: Synchronized capabilities across `split`, `crop`, and `merge` commands—all now support cropping, scaling, and time ranges.
+- 🎞️ **Auto-Deinterlace**: Implemented intelligent deinterlacing using both metadata detection and frame analysis (yadif).
+
+### 🚀 CLI & Engine Improvements
+- 🛡️ **Robust Execution**: Updated all commands to correctly report `ffmpeg` failures with non-zero exit codes.
+- ⚙️ **Modern Packaging**: Migrated build system to `hatchling` for better asset management and production-ready `.whl` distribution.
+- 📂 **Cross-platform Build**: Added `scripts/build.sh` and `scripts.build.bat` for easy one-click packaging on any OS.
+
+### 🔧 Bug Fixes
+- 🪟 **Async Windows Fix**: Resolved `RuntimeError: There is no active click context` by implementing robust context re-pushing in the async engine.
+- 📍 **Path Normalization**: Improved path handling by automatically normalizing backslashes and relative paths.
+- 🕵️ **Probe Stability**: Enhanced `ffprobe` reliability when handling missing codec or duration metadata.
+
+---
+
 ## 🚀 [0.3.2] - 2026-03-15
 
 ### 📝 Documentation

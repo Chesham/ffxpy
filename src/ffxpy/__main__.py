@@ -452,7 +452,7 @@ async def crop(
     if audio_bitrate:
         setting.audio_bitrate = audio_bitrate
 
-    detected_filters = []
+    detected_filters: list[str] = []
     try:
         info = await probe_video(input_path, ffprobe_path=setting.ffprobe_path)
         # TODO: Validate crop area against info.width/height if needed
@@ -893,7 +893,9 @@ async def flow(
 async def exec(ctx_: typer.Context):
     ctx = solve_context(ctx_)
     args = [ctx.setting.ffmpeg_path, *ctx_.args]
-    success = await run_ffmpeg(args, dry_run=ctx.setting.dry_run, job_name='Direct execution')
+    success = await run_ffmpeg(
+        args, dry_run=ctx.setting.dry_run, job_name='Direct execution'
+    )
     if not success and not ctx.setting.dry_run:
         raise typer.Exit(code=1)
 

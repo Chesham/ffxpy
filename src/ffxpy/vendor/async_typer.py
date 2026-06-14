@@ -31,7 +31,8 @@ class AsyncTyper(typer.Typer):
                             break
 
                 async def wrapped():
-                    # Re-push context inside the async loop (important for Windows/Asyncio)
+                    # Re-push context inside the async loop
+                    # (important for Windows/Asyncio)
                     if ctx:
                         with ctx:
                             await self.run_event_handlers('startup', ctx)

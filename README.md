@@ -13,6 +13,7 @@
 - **Smart Merge Optimization**: Detects single-file merge tasks and uses direct file moves to bypass `ffmpeg` overhead completely.
 - **Production-Ready Visualization**: Beautiful, real-time progress bars with live transcoding metrics (speed, FPS) powered by `rich`.
 - **Pre-flight Validation**: Uses `ffprobe` to verify video assets and time ranges *before* starting long-running jobs.
+- **Unified Web UI**: Professional browser-based studio for visual timeline editing, cropping, and workflow orchestration.
 
 ## 📦 Installation
 
@@ -24,11 +25,24 @@ uv tool install ffxpy
 
 # Or run it instantly without installation
 uvx ffxpy flow highlights.yml
+
+# Start the Visual Studio
+ffx ui
 ```
 
 ## 🛠 Usage & Scenarios
 
-### 1. Automated Workflows (Recommended 🌟)
+### 1. Visual Studio (Web UI) 🎨
+
+The most intuitive way to use `ffxpy`. Launch the local server and edit your videos in the browser:
+```bash
+ffx ui
+```
+- **Timeline Editing**: Visual In/Out point selection with keyframe snapping.
+- **Interactive Cropping**: Draggable area selection directly on the video player.
+- **Concurrent Queue**: Manage multiple tasks and watch them execute in parallel with live metrics.
+
+### 2. Automated Workflows (Recommended for batch 🌟)
 
 The most powerful way to use `ffxpy` is via YAML-defined workflows. It features a beautiful, real-time multi-tasking interface:
 
@@ -74,6 +88,9 @@ Job #6           ━━━━━━━━━━━━━━━━━━━━━
 ```bash
 # Precision splitting (supports ISO durations or HH:MM:SS)
 ffx split input.mp4 --start 00:00:10 --end 00:00:20 -o clip.mp4
+
+# Interactive or CLI cropping
+ffx crop input.mp4 --crop 1920:1080:0:0 -o output.mp4
 
 # Smart merging of split parts
 ffx merge --with-split -o final_merged.mp4
