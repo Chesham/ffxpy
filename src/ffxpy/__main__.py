@@ -351,7 +351,8 @@ async def merge(
             ''.join(
                 f"file '{path.resolve().as_posix()}'\n"
                 for path in setting.merge_paths
-            )
+            ),
+            encoding='utf-8',
         )
 
     # Smart Merge: Optimization for single file copy
@@ -750,7 +751,8 @@ async def flow(
                             ''.join(
                                 f"file '{path.resolve().as_posix()}'\n"
                                 for path in job.setting.merge_paths
-                            )
+                            ),
+                            encoding='utf-8',
                         )
 
                 if not job.setting.overwrite and job.setting.skip_existing:

@@ -262,7 +262,7 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
                         f"file '{p.resolve().as_posix()}'\n"
                         for p in job.setting.merge_paths
                     ]
-                    job.setting.input_path.write_text(''.join(lines))
+                    job.setting.input_path.write_text(''.join(lines), encoding='utf-8')
                     res_cleanup.add(job.setting.input_path)
 
             if (
