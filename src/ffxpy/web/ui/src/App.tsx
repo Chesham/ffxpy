@@ -247,7 +247,7 @@ export default function App() {
     if (videoRef.current) videoRef.current.currentTime = val
   }
 
-  const handleProbe = useCallback(async (path: string) => {
+  const handleProbe = useCallback(async (path: string, preserveJobs: boolean = false) => {
     if (!path) return
     setIsSubmitting(true); setError(null)
     try {
@@ -257,15 +257,18 @@ export default function App() {
       const ts = (parseInt(m?.[1]||'0')*3600)+(parseInt(m?.[2]||'0')*60)+parseFloat(m?.[3]||'0')
       
       // Auto-Reset UI State for new video
-      setJobs([])
-      setActiveJobId(null)
+      if (!preserveJobs) {
+        setJobs([])
+        setActiveJobId(null)
+        setKeyframes([])
+      }
       setCurrentTime(0)
       setVideoPath(path)
       setEstablishedMap({})
 
       setVideoInfo({ ...d, duration_sec: ts })
       setEditTime(formatTime(0))
-      setKeyframes([])
+      if (!preserveJobs) setKeyframes([])
     } catch (e: unknown) { setError(e instanceof Error ? e.message : String(e)) } finally { setIsSubmitting(false) }
   }, [])
 
@@ -276,7 +279,7 @@ export default function App() {
 
   const applySettings = useCallback(() => {
     if (tempVideoPath !== videoPath) {
-      handleProbe(tempVideoPath)
+      handleProbe(tempVideoPath, videoPath === '')
     }
     setIsSettingsOpen(false)
   }, [tempVideoPath, videoPath, handleProbe])
@@ -324,7 +327,7 @@ export default function App() {
   }, [globalSetting])
 
   useEffect(() => {
-    if (isSyncingFromYaml.current) return
+    if (activeTab === 'yaml') return // Two-way binding separate paths
     const clean = (o: Record<string, unknown>) => {
        const r: Record<string, unknown> = { ...o }
        Object.keys(r).forEach(k => { if (r[k] === '' || r[k] === undefined) delete r[k] })
@@ -351,8 +354,9 @@ export default function App() {
         return { command: j.command, name: j.name, setting: clean(jobSetting) }
       })
     }
-    setYamlText(yaml.dump(flowObj, { indent: 2, skipInvalid: true, noRefs: true }))
-  }, [globalSetting, jobs, videoPath])
+    const newYaml = yaml.dump(flowObj, { indent: 2, skipInvalid: true, noRefs: true })
+    setYamlText(newYaml)
+  }, [globalSetting, jobs, videoPath, activeTab])
 
   const handleYamlChange = (v: string) => {
     setYamlText(v)
@@ -364,8 +368,12 @@ export default function App() {
         const setting = dObj.setting as Record<string, unknown> | undefined
         if (setting) {
           if (typeof setting.input_path === 'string') {
-            setVideoPath(setting.input_path)
-            setTempVideoPath(setting.input_path)
+            const newPath = setting.input_path
+            if (newPath !== videoPath) {
+              handleProbe(newPath, true)
+            }
+            setVideoPath(newPath)
+            setTempVideoPath(newPath)
           }
           const rest = { ...setting }
           delete rest.input_path
