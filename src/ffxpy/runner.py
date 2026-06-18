@@ -1,4 +1,5 @@
 import asyncio
+import collections
 import re
 from datetime import timedelta
 from typing import Any, Callable, Dict, List, Optional, Union
@@ -68,6 +69,7 @@ async def run_ffmpeg(
 
     progress_state: Dict[str, Optional[str]] = {'fps': None, 'speed': None}
     last_completed = 0.0
+    error_log: collections.deque[str] = collections.deque(maxlen=50)
 
     async def stream_output(stream: asyncio.StreamReader):
         nonlocal last_completed
@@ -99,6 +101,8 @@ async def run_ffmpeg(
                 line_str = line_bytes.decode('utf-8', errors='replace').strip()
                 if not line_str:
                     continue
+
+                error_log.append(line_str)
 
                 update_kwargs: Dict[str, Any] = {}
                 is_machine_format = (
@@ -202,12 +206,19 @@ async def run_ffmpeg(
         raise
 
     if process.returncode != 0:
+        error_msg = '\n'.join(error_log)
+        console.print(
+            f'[red]ffmpeg failed with returncode {process.returncode}. '
+            'Last logs:[/red]'
+        )
+        console.print(error_msg)
         if on_progress:
             res = on_progress(
                 {
                     'status': 'error',
                     'job_name': job_name,
                     'returncode': process.returncode,
+                    'log': error_msg,
                 }
             )
             if asyncio.iscoroutine(res):

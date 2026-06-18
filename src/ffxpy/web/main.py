@@ -277,7 +277,10 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
                 filters=filters,
             )
 
+            error_log = ''
+
             async def progress_callback(data: Dict[str, Any]) -> None:
+                nonlocal error_log
                 if data['status'] == 'processing':
                     cur_p = data.get('completed', 0.0)
                     ratio = min(1.0, cur_p / weight) if weight > 0 else 1.0
@@ -295,6 +298,8 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
                             }
                         )
                     await queue.put(data)
+                elif data['status'] == 'error':
+                    error_log = data.get('log', '')
 
             initial_msg = {
                 'status': 'processing',
@@ -317,9 +322,14 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
             if not success:
                 async with progress_lock:
                     await queue.put(
-                        {'status': 'failed', 'job_name': job_name, 'job_index': index}
+                        {
+                            'status': 'failed',
+                            'job_name': job_name,
+                            'job_index': index,
+                            'error': error_log,
+                        }
                     )
-                raise RuntimeError(f'Job {job_name} failed')
+                raise RuntimeError(f'Job {job_name} failed. Log:\n{error_log}')
 
             async with progress_lock:
                 job_ratios[index] = 1.0
