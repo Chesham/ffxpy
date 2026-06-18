@@ -9,8 +9,9 @@ import { twMerge } from 'tailwind-merge'
 import yaml from 'js-yaml'
 
 function cn(...inputs: ClassValue[]) { return twMerge(clsx(inputs)) }
-const API_BASE = 'http://localhost:8000'
+const API_BASE = import.meta.env.DEV ? 'http://localhost:8000' : ''
 const normalizePath = (p: string) => p.replace(/\\/g, '/')
+const generateId = () => typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID().split('-')[0] : Math.random().toString(36).substring(2, 10)
 
 function VisualCropper({ 
   videoRef, 
@@ -375,7 +376,7 @@ export default function App() {
           setJobs(jobsList.map((j: unknown) => {
             const jobObj = j as Record<string, unknown>
             return { 
-              id: (jobObj.id as string) || crypto.randomUUID().split('-')[0], 
+              id: (jobObj.id as string) || generateId(), 
               ...jobObj, 
               setting: (jobObj.setting as JobSetting) || {} 
             } as Job
@@ -449,7 +450,7 @@ export default function App() {
   }
 
   const addJob = (type: 'split' | 'merge' | 'crop') => {
-    const id = crypto.randomUUID().split('-')[0]
+    const id = generateId()
     const newJob: Job = { 
       id, 
       name: `${type.toUpperCase()} #${jobs.length + 1}`, 
