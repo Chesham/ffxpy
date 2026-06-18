@@ -348,7 +348,10 @@ async def merge(
 
     if setting.input_path:
         setting.input_path.write_text(
-            ''.join(f"file '{path.resolve()}'\n" for path in setting.merge_paths)
+            ''.join(
+                f"file '{path.resolve().as_posix()}'\n"
+                for path in setting.merge_paths
+            )
         )
 
     # Smart Merge: Optimization for single file copy
@@ -745,7 +748,7 @@ async def flow(
                     if job.setting.input_path:
                         job.setting.input_path.write_text(
                             ''.join(
-                                f"file '{path.resolve()}'\n"
+                                f"file '{path.resolve().as_posix()}'\n"
                                 for path in job.setting.merge_paths
                             )
                         )

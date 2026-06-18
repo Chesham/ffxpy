@@ -258,7 +258,10 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
             if job.command == Command.MERGE:
                 before_inputs = {'-f': 'concat', '-safe': '0'}
                 if job.setting.input_path:
-                    lines = [f"file '{p.resolve()}'\n" for p in job.setting.merge_paths]
+                    lines = [
+                        f"file '{p.resolve().as_posix()}'\n"
+                        for p in job.setting.merge_paths
+                    ]
                     job.setting.input_path.write_text(''.join(lines))
                     res_cleanup.add(job.setting.input_path)
 
