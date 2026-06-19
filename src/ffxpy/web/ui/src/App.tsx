@@ -293,10 +293,24 @@ export default function App() {
   }, [isSettingsOpen])
 
   useEffect(() => {
-    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+    const handleGlobalKeyDown = async (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isSettingsOpen) {
         setIsSettingsOpen(false)
         return
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') {
+        e.preventDefault()
+        try {
+          const res = await fetch(`${API_BASE}/api/dialog/open`)
+          if (res.ok) {
+            const data = await res.json()
+            if (data.path) {
+              handleProbe(data.path)
+            }
+          }
+        } catch (err) {
+          console.error("Failed to open file dialog", err)
+        }
       }
       if (isTyping) return
       if (e.key.toLowerCase() === 's' && e.altKey) {

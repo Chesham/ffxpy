@@ -61,6 +61,35 @@ async def close_video():
     return {'status': 'closed'}
 
 
+@app.get('/api/dialog/open')
+async def open_file_dialog():
+    import tkinter as tk
+    from tkinter import filedialog
+    
+    def _open():
+        try:
+            root = tk.Tk()
+            root.attributes("-topmost", True)
+            root.withdraw()
+            file_path = filedialog.askopenfilename(
+                title="Select Video File",
+                filetypes=[("Video files", "*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm *.ts *.m2ts"), ("All files", "*.*")]
+            )
+            root.destroy()
+            return file_path
+        except Exception as e:
+            return None
+            
+    loop = asyncio.get_event_loop()
+    path = await loop.run_in_executor(None, _open)
+    
+    if not path:
+        return {"path": None}
+    
+    return {"path": str(Path(path).resolve().as_posix())}
+
+
+
 @app.get('/api/keyframes')
 async def get_keyframes(path: str, time: float = -1.0, range_sec: float = 2.0):
     """
