@@ -23,3 +23,33 @@
     那麼 結束狀態碼應該為 0
     並且 檔案 "part1.mp4" 應該存在
     並且 檔案 "part2.mp4" 應該存在
+
+  場景: 防資料遺失及安全清理機制測試 (Web API 後端)
+    假如 我建立檔案 "safe_flow.yml"，內容如下
+      """
+      setting:
+        input_path: "{video_5s}"
+        keep_temp: false
+      jobs:
+        - name: "Split 1"
+          command: "split"
+          setting:
+            end: "00:00:01"
+            output_path: "safe_part1.mp4"
+        - name: "Split 2"
+          command: "split"
+          setting:
+            start: "00:00:02"
+            output_path: "safe_part2.mp4"
+        - name: "Merge"
+          command: "merge"
+          setting:
+            output_path: "safe_merged.mp4"
+      """
+    當 我透過 Web 背景常駐程式執行工作流檔案 "safe_flow.yml"
+    那麼 結束狀態碼應該為 0
+    並且 檔案 "{video_5s}" 應該存在
+    並且 檔案 "safe_part1.mp4" 應該不存在
+    並且 檔案 "safe_part2.mp4" 應該不存在
+    並且 檔案 "safe_merged.mp4" 應該存在
+    並且 檔案 "ffxpy_merge_list.txt" 應該不存在
