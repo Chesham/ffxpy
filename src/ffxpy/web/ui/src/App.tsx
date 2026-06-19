@@ -363,7 +363,7 @@ export default function App() {
     } catch { /* ignore */ }
     if (videoRef.current) {
       videoRef.current.pause()
-      videoRef.current.removeAttribute('src')
+      videoRef.current.src = '' // Explicitly set to empty string to forcefully abort pending browser requests
       videoRef.current.load()
     }
     setVideoPath('')
