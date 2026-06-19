@@ -36,6 +36,41 @@ TEMP_DIR.mkdir(parents=True, exist_ok=True)
 keyframes_cache: Dict[str, List[float]] = {}
 active_jobs: Dict[str, asyncio.Queue] = {}
 running_tasks: Dict[str, asyncio.Task] = {}
+shutdown_signal: asyncio.Event = None
+
+
+@app.on_event('startup')
+async def startup_event():
+    global shutdown_signal
+    shutdown_signal = asyncio.Event()
+    import sys
+    if sys.platform == 'win32':
+        # Silence the annoying ConnectionResetError when scrubbing video on Windows
+        try:
+            from asyncio.proactor_events import _ProactorBasePipeTransport
+            from functools import wraps
+
+            original_call_connection_lost = _ProactorBasePipeTransport._call_connection_lost
+
+            @wraps(original_call_connection_lost)
+            def patched_call_connection_lost(self, exc):
+                try:
+                    original_call_connection_lost(self, exc)
+                except ConnectionResetError:
+                    pass
+            _ProactorBasePipeTransport._call_connection_lost = patched_call_connection_lost
+        except Exception:
+            pass
+
+
+@app.on_event('shutdown')
+async def shutdown_event():
+    """Cancel all running tasks to allow clean shutdown."""
+    if shutdown_signal:
+        shutdown_signal.set()
+    for task_id, task in running_tasks.items():
+        if not task.done():
+            task.cancel()
 
 
 @app.get('/api/probe')
@@ -464,16 +499,21 @@ async def get_events(job_id: str):
 
     async def event_generator():
         try:
-            while True:
+            while not shutdown_signal.is_set():
                 try:
-                    data = await asyncio.wait_for(queue.get(), timeout=30.0)
-                    yield f'data: {json.dumps(data)}\n\n'
-                    if data.get('status') in ['finished', 'failed']:
-                        break
-                except asyncio.TimeoutError:
-                    yield ': ping\n\n'
+                    # Polling the queue so we can respond to shutdown
+                    try:
+                        data = await asyncio.wait_for(queue.get(), timeout=2.0)
+                        yield f'data: {json.dumps(data)}\n\n'
+                        if data.get('status') in ['finished', 'failed']:
+                            break
+                    except asyncio.TimeoutError:
+                        yield ': ping\n\n'
+                except asyncio.CancelledError:
+                    break
         finally:
-            await asyncio.sleep(2)
+            if not shutdown_signal.is_set():
+                await asyncio.sleep(2)
             if job_id in active_jobs:
                 del active_jobs[job_id]
 

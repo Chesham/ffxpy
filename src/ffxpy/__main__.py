@@ -505,7 +505,7 @@ async def ui(
         '[yellow]Note: For development, run `npm run dev` in src/ffxpy/web/ui[/yellow]'
     )
 
-    config = uvicorn.Config(web_app, host=host, port=port, log_level='info')
+    config = uvicorn.Config(web_app, host=host, port=port, log_level='info', timeout_graceful_shutdown=2)
     server = uvicorn.Server(config)
     await server.serve()
 
