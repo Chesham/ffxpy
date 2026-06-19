@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { 
   Loader2, CheckCircle2, Plus, ChevronLeft, ChevronRight, 
   Settings2, Clock, Code, LocateFixed, 
-  History as HistoryIcon, Layers, CircleDot, X, AlertCircle, PlayCircle, Film, Boxes, GripVertical
+  History as HistoryIcon, Layers, CircleDot, X, AlertCircle, PlayCircle, Film, Boxes, GripVertical, HelpCircle
 } from 'lucide-react'
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
@@ -220,6 +220,7 @@ export default function App() {
   const [tempVideoPath, setTempVideoPath] = useState('')
   const [isTyping, setIsTyping] = useState(false)
   const [isCropMode, setIsCropMode] = useState(false)
+  const [isHelpOpen, setIsHelpOpen] = useState(false)
   
   const videoRef = useRef<HTMLVideoElement>(null)
   const settingsInputRef = useRef<HTMLInputElement>(null)
@@ -294,9 +295,15 @@ export default function App() {
 
   useEffect(() => {
     const handleGlobalKeyDown = async (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isSettingsOpen) {
-        setIsSettingsOpen(false)
-        return
+      if (e.key === 'Escape') {
+        if (isHelpOpen) {
+          setIsHelpOpen(false)
+          return
+        }
+        if (isSettingsOpen) {
+          setIsSettingsOpen(false)
+          return
+        }
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') {
         e.preventDefault()
@@ -313,14 +320,42 @@ export default function App() {
         }
       }
       if (isTyping) return
-      if (e.key.toLowerCase() === 's' && e.altKey) {
+      
+      if (e.code === 'KeyS' && e.altKey) {
         e.preventDefault()
         openSettings()
+      }
+      
+      if (e.code === 'KeyQ' && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+        e.preventDefault()
+        handleCloseVideo()
+      }
+
+      if (e.code === 'KeyH' && !isModalOpen && !isSettingsOpen && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault()
+        setIsHelpOpen(p => !p)
+      }
+
+      if (e.code === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault()
+        if (!isSubmitting && jobs.length > 0 && !isModalOpen && !isSettingsOpen) {
+          handleExecute()
+        }
+      }
+
+      if (e.code === 'BracketLeft' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault()
+        stepKeyframe('prev')
+      }
+
+      if (e.code === 'BracketRight' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault()
+        stepKeyframe('next')
       }
     }
     window.addEventListener('keydown', handleGlobalKeyDown)
     return () => window.removeEventListener('keydown', handleGlobalKeyDown)
-  }, [isTyping, isSettingsOpen, openSettings])
+  }) // No dependency array to ensure closures always have the latest state for handlers like handleCloseVideo and handleExecute
 
   const handleCloseVideo = async () => {
     try {
@@ -531,6 +566,31 @@ export default function App() {
       es.onerror = () => { es.close(); setIsSubmitting(false); }
     } catch (e: unknown) { setError(e instanceof Error ? e.message : String(e)); setWorkflow(p=>p?{...p, status:'failed'}:null); setIsSubmitting(false); } finally { setIsSubmitting(false) }
   }
+
+  // Keyboard shortcuts for Modal
+  useEffect(() => {
+    const handleModalKeyDown = (e: KeyboardEvent) => {
+      if (!isModalOpen) return
+      
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        if (workflow?.status === 'running' || workflow?.status === 'preparing') {
+          handleCancel()
+        } else if (workflow?.status === 'finished' || workflow?.status === 'failed') {
+          setIsModalOpen(false)
+          setWorkflow(null)
+        }
+      } else if (e.key === 'Enter') {
+        if (workflow?.status === 'finished' || workflow?.status === 'failed') {
+          e.preventDefault()
+          setIsModalOpen(false)
+          setWorkflow(null)
+        }
+      }
+    }
+    window.addEventListener('keydown', handleModalKeyDown)
+    return () => window.removeEventListener('keydown', handleModalKeyDown)
+  }, [isModalOpen, workflow?.status, handleCancel])
 
   function formatTime(s: number) {
     if (isNaN(s)) return "00:00:00.000"
@@ -987,6 +1047,53 @@ export default function App() {
             </div>
             <div className="pt-4 flex justify-center">
               <button onClick={applySettings} className="px-12 py-3 bg-cyan-600 hover:bg-cyan-400 text-white font-black text-[10px] tracking-[0.2em] rounded-full transition-all uppercase shadow-lg shadow-cyan-900/20">Apply & Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isHelpOpen && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/80 backdrop-blur-md animate-in fade-in duration-300" onClick={() => setIsHelpOpen(false)}>
+          <div
+            className="w-full max-w-2xl bg-[#0c0c0c] border border-white/10 rounded-3xl shadow-[0_0_50px_rgba(0,0,0,0.8)] p-10 space-y-8 animate-in zoom-in-95 duration-300"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center border-b border-white/[0.05] pb-6">
+              <div className="flex flex-col gap-1">
+                <h3 className="text-xl font-black uppercase tracking-[0.3em] text-white flex items-center gap-3"><HelpCircle size={22} className="text-cyan-500"/> Keyboard Shortcuts</h3>
+                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Master your workflow with keys</p>
+              </div>
+              <button onClick={() => setIsHelpOpen(false)} className="p-3 bg-white/[0.03] rounded-full hover:bg-white/[0.08] transition-colors"><X size={20}/></button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-x-12 gap-y-6">
+              <div className="space-y-4">
+                <h4 className="text-[10px] font-black text-cyan-600 uppercase tracking-[0.2em]">Global Actions</h4>
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center"><span className="text-xs font-bold text-gray-400">Open Video</span><kbd className="px-2.5 py-1 bg-white/[0.05] border border-white/[0.1] rounded text-[10px] font-mono text-gray-300 shadow-sm">Ctrl + O</kbd></div>
+                  <div className="flex justify-between items-center"><span className="text-xs font-bold text-gray-400">Close Video</span><kbd className="px-2.5 py-1 bg-white/[0.05] border border-white/[0.1] rounded text-[10px] font-mono text-gray-300 shadow-sm">Alt + Q</kbd></div>
+                  <div className="flex justify-between items-center"><span className="text-xs font-bold text-gray-400">Flow Settings</span><kbd className="px-2.5 py-1 bg-white/[0.05] border border-white/[0.1] rounded text-[10px] font-mono text-gray-300 shadow-sm">Alt + S</kbd></div>
+                  <div className="flex justify-between items-center"><span className="text-xs font-bold text-gray-400">Toggle Help</span><kbd className="px-2.5 py-1 bg-white/[0.05] border border-white/[0.1] rounded text-[10px] font-mono text-gray-300 shadow-sm">H</kbd></div>
+                  <div className="flex justify-between items-center"><span className="text-xs font-bold text-gray-400">Prev Keyframe</span><kbd className="px-2.5 py-1 bg-white/[0.05] border border-white/[0.1] rounded text-[10px] font-mono text-gray-300 shadow-sm">[</kbd></div>
+                  <div className="flex justify-between items-center"><span className="text-xs font-bold text-gray-400">Next Keyframe</span><kbd className="px-2.5 py-1 bg-white/[0.05] border border-white/[0.1] rounded text-[10px] font-mono text-gray-300 shadow-sm">]</kbd></div>
+                </div>
+              </div>
+              <div className="space-y-4">
+                <h4 className="text-[10px] font-black text-cyan-600 uppercase tracking-[0.2em]">During Execution</h4>
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center"><span className="text-xs font-bold text-gray-400">Run Flow</span><kbd className="px-2.5 py-1 bg-white/[0.05] border border-white/[0.1] rounded text-[10px] font-mono text-gray-300 shadow-sm">Ctrl + Enter</kbd></div>
+                  <div className="flex justify-between items-center"><span className="text-xs font-bold text-gray-400">Cancel Flow</span><kbd className="px-2.5 py-1 bg-white/[0.05] border border-white/[0.1] rounded text-[10px] font-mono text-gray-300 shadow-sm">Esc</kbd></div>
+                  <div className="flex justify-between items-center"><span className="text-xs font-bold text-gray-400">Close Modal</span><kbd className="px-2.5 py-1 bg-white/[0.05] border border-white/[0.1] rounded text-[10px] font-mono text-gray-300 shadow-sm">Enter / Esc</kbd></div>
+                </div>
+                <h4 className="text-[10px] font-black text-cyan-600 uppercase tracking-[0.2em] pt-4">Other Windows</h4>
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center"><span className="text-xs font-bold text-gray-400">Close Panel</span><kbd className="px-2.5 py-1 bg-white/[0.05] border border-white/[0.1] rounded text-[10px] font-mono text-gray-300 shadow-sm">Esc</kbd></div>
+                </div>
+              </div>
+            </div>
+            
+            <div className="pt-4 flex justify-center">
+              <button onClick={() => setIsHelpOpen(false)} className="px-12 py-3 bg-white/[0.05] hover:bg-white/[0.1] text-white font-black text-[10px] tracking-[0.2em] rounded-full transition-all uppercase">Got It</button>
             </div>
           </div>
         </div>
