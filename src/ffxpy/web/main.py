@@ -145,6 +145,7 @@ async def get_keyframes(path: str, time: float = -1.0, range_sec: float = 2.0):
 async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
     queue = active_jobs[job_id]
     from ffxpy.__main__ import compile_commandline
+    from ffxpy.models.flow import merge_normalize, split_normalize
 
     try:
         flow = Flow.model_validate(request_data)
@@ -159,13 +160,29 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
 
         job_durations: List[float] = []
         job_filters: List[List[str]] = []
+
+        # Phase 0: Normalize paths
+        for idx, job in enumerate(flow.jobs):
+            if job.command == Command.SPLIT:
+                job.setting = split_normalize(job.setting)
+            elif job.command == Command.MERGE:
+                job.setting = merge_normalize(
+                    job.setting,
+                    merge_paths=[
+                        i.setting.output_path
+                        for i in flow.jobs[:idx]
+                        if i.setting.output_path
+                    ],
+                )
+
+        # Phase 1: Pre-flight Validation
         for index, job in enumerate(flow.jobs):
             w = 1.0
             detected_filters = []
             job_name = job.name or f'Job #{index + 1}'
             if job.command == Command.SPLIT:
                 if not job.setting.input_path:
-                    raise ValueError(f'"{job_name}" has no input path')
+                    raise ValueError(f'"{job_name}" has no input path. Please ensure global video is loaded or input_path is defined in YAML.')
                 try:
                     info = await probe_video(
                         job.setting.input_path, ffprobe_path=settings.ffprobe_path
@@ -264,11 +281,8 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
                     ]
                     job.setting.input_path.write_text(''.join(lines), encoding='utf-8')
                     res_cleanup.add(job.setting.input_path)
-
-            if (
-                job.command == Command.SPLIT or job.command == Command.CROP
-            ) and job.setting.output_path:
-                res_cleanup.add(job.setting.output_path)
+                    for path in job.setting.merge_paths:
+                        res_cleanup.add(path)
 
             input_path = job.setting.input_path or Path('temp.mp4')
             output_path = job.setting.output_path or Path('out.mp4')

@@ -312,6 +312,11 @@ export default function App() {
     try {
       await fetch(`${API_BASE}/api/close`, { method: 'POST' })
     } catch { /* ignore */ }
+    if (videoRef.current) {
+      videoRef.current.pause()
+      videoRef.current.removeAttribute('src')
+      videoRef.current.load()
+    }
     setVideoPath('')
     setVideoInfo(null)
     setJobs([])
@@ -497,7 +502,7 @@ export default function App() {
         setWorkflow(prev => {
           const next = prev ? { ...prev } : { status: 'running', overall_completed: 0, overall_total: 1.0, total_jobs: jobs.length, jobStatuses: {} }
           if (data.status === 'finished') { next.status = 'finished'; next.overall_completed = 1.0; }
-          else if (data.status === 'failed') next.status = 'failed'
+          else if (data.status === 'failed') { next.status = 'failed'; if (data.error) setError(data.error); }
           else {
             next.status = 'running'
             if (data.job_index !== undefined) {

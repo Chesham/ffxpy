@@ -131,7 +131,8 @@ def merge_normalize(setting: Setting, merge_paths: list[Path] | None = None):
                 working_dir.glob('*_split_*', case_sensitive=False)
             )
 
-    setting.input_path = setting.input_path or working_dir / 'ffxpy_merge_list.txt'
+    if not setting.input_path or setting.input_path.suffix.lower() != '.txt':
+        setting.input_path = working_dir / 'ffxpy_merge_list.txt'
 
     if not setting.output_path and setting.merge_paths:
         stem = setting.merge_paths[0].stem.split('_split')[0]
