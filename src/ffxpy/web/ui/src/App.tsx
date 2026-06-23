@@ -221,6 +221,7 @@ export default function App() {
   const [isTyping, setIsTyping] = useState(false)
   const [isCropMode, setIsCropMode] = useState(false)
   const [isHelpOpen, setIsHelpOpen] = useState(false)
+  const [toastMessage, setToastMessage] = useState<string | null>(null)
   
   const videoRef = useRef<HTMLVideoElement>(null)
   const settingsInputRef = useRef<HTMLInputElement>(null)
@@ -270,6 +271,19 @@ export default function App() {
       setVideoInfo({ ...d, duration_sec: ts })
       setEditTime(formatTime(0))
       if (!preserveJobs) setKeyframes([])
+
+      if (d.bit_rate) {
+        const kbps = Math.round(d.bit_rate / 1000)
+        const bitrateStr = kbps >= 1000 ? `${parseFloat((kbps / 1000).toFixed(2))}M` : `${kbps}k`
+        setGlobalSetting(prev => {
+          if (prev.video_bitrate !== bitrateStr) {
+            setToastMessage(`Auto-detected bitrate: ${bitrateStr}`)
+            return { ...prev, video_bitrate: bitrateStr }
+          }
+          return prev
+        })
+      }
+
     } catch (e: unknown) { setError(e instanceof Error ? e.message : String(e)) } finally { setIsSubmitting(false) }
   }, [])
 
@@ -292,6 +306,39 @@ export default function App() {
       return () => clearTimeout(timer)
     }
   }, [isSettingsOpen])
+
+  useEffect(() => {
+    if (toastMessage) {
+      const timer = setTimeout(() => setToastMessage(null), 3000)
+      return () => clearTimeout(timer)
+    }
+  }, [toastMessage])
+
+  useEffect(() => {
+    if (!isSettingsOpen || !tempVideoPath) return
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/probe?path=${encodeURIComponent(tempVideoPath)}`)
+        if (res.ok) {
+          const d = await res.json()
+          if (d.bit_rate) {
+            const kbps = Math.round(d.bit_rate / 1000)
+            const bitrateStr = kbps >= 1000 ? `${parseFloat((kbps / 1000).toFixed(2))}M` : `${kbps}k`
+            setGlobalSetting(prev => {
+              if (prev.video_bitrate !== bitrateStr) {
+                setToastMessage(`Auto-detected bitrate: ${bitrateStr}`)
+                return { ...prev, video_bitrate: bitrateStr }
+              }
+              return prev
+            })
+          }
+        }
+      } catch (e) {
+        // silently ignore probe errors during typing
+      }
+    }, 1000)
+    return () => clearTimeout(timer)
+  }, [tempVideoPath, isSettingsOpen])
 
   useEffect(() => {
     const handleGlobalKeyDown = async (e: KeyboardEvent) => {
@@ -1096,6 +1143,12 @@ export default function App() {
               <button onClick={() => setIsHelpOpen(false)} className="px-12 py-3 bg-white/[0.05] hover:bg-white/[0.1] text-white font-black text-[10px] tracking-[0.2em] rounded-full transition-all uppercase">Got It</button>
             </div>
           </div>
+        </div>
+      )}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 bg-cyan-900/90 border border-cyan-500/50 text-cyan-50 px-4 py-3 rounded-lg shadow-lg flex items-center gap-3 z-[100] animate-in fade-in slide-in-from-bottom-4">
+          <CheckCircle2 size={16} className="text-cyan-400" />
+          <span className="text-xs font-bold tracking-wide">{toastMessage}</span>
         </div>
       )}
 

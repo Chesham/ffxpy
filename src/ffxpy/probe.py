@@ -14,12 +14,14 @@ class StreamInfo(pydantic.BaseModel):
     width: int | None = None
     height: int | None = None
     field_order: str | None = None
+    bit_rate: int | None = None
 
 
 class VideoInfo(pydantic.BaseModel):
     format_name: str
     duration: timedelta
     size: int
+    bit_rate: int | None = None
     streams: list[StreamInfo]
 
 
@@ -118,6 +120,7 @@ async def probe_video(path: Path, ffprobe_path: str = 'ffprobe') -> VideoInfo:
             width=s.get('width'),
             height=s.get('height'),
             field_order=s.get('field_order'),
+            bit_rate=int(s.get('bit_rate')) if s.get('bit_rate') else None,
         )
         for s in streams_data
     ]
@@ -125,9 +128,19 @@ async def probe_video(path: Path, ffprobe_path: str = 'ffprobe') -> VideoInfo:
     duration_str = format_data.get('duration')
     duration = timedelta(seconds=float(duration_str)) if duration_str else timedelta(0)
 
+    # Try to find the video stream's bit rate first
+    video_stream = next((s for s in streams if s.codec_type == 'video'), None)
+    if video_stream and video_stream.bit_rate:
+        bit_rate = video_stream.bit_rate
+    else:
+        # Fallback to overall format bit rate
+        bit_rate_str = format_data.get('bit_rate')
+        bit_rate = int(bit_rate_str) if bit_rate_str else None
+
     return VideoInfo(
         format_name=format_data['format_name'],
         duration=duration,
         size=int(format_data['size']),
+        bit_rate=bit_rate,
         streams=streams,
     )
