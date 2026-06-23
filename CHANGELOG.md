@@ -1,5 +1,20 @@
 # CHANGELOG
 
+## 🚀 [0.4.1] - 2026-06-24
+
+### ✨ Core Features
+- 📜 **Error Feedback**: Relayed `ffmpeg` stderr logs directly to the Web UI to provide immediate insights when background jobs fail.
+
+### 🔧 Bug Fixes
+- 🔗 **API Resolution**: Switched the Web UI to use relative `API_BASE` endpoints in production, enabling seamless access via external IPs.
+- 🔑 **UUID Generation**: Implemented a secure fallback for `crypto.randomUUID()` to prevent app crashes when accessing the Web UI over non-HTTPS connections.
+- 🔄 **Two-Way Binding**: Completely decoupled the YAML editor from visual state rendering, eliminating destructive auto-formatting while typing.
+- 📼 **Smart Video Loading**: Pasting YAML with an `input_path` now automatically probes and loads the video timeline without erasing the existing Job Queue.
+- 🪟 **Cross-Platform Paths**: Fixed an issue on Windows where backslashes in `ffxpy_merge_list.txt` caused `ffmpeg`'s concat demuxer to fail with `Invalid argument`. Path serialization now strictly uses POSIX forward slashes.
+- 🌍 **Locale Encoding**: Enforced `utf-8` encoding when writing merge lists to disk, preventing catastrophic `ffmpeg` crashes on Windows systems using legacy default encodings (e.g., `cp950`).
+
+---
+
 ## 🚀 [0.4.0] - 2026-06-14
 
 ### ✨ Core Features
