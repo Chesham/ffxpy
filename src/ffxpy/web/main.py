@@ -81,18 +81,19 @@ async def get_video_info(path: str):
     return await probe_video(video_path, ffprobe_path=settings.ffprobe_path)
 
 
-from anyio import open_file
-
 async def chunked_video(path: Path, start: int, end: int, chunk_size: int = 1024 * 1024):
-    async with await open_file(path, "rb") as video:
-        await video.seek(start)
+    video = open(path, "rb")
+    try:
+        video.seek(start)
         remaining = end - start + 1
         while remaining > 0:
-            chunk = await video.read(min(chunk_size, remaining))
+            chunk = video.read(min(chunk_size, remaining))
             if not chunk:
                 break
             yield chunk
             remaining -= len(chunk)
+    finally:
+        video.close()
 
 @app.get('/api/stream')
 async def stream_video(path: str, request: Request):
@@ -104,7 +105,16 @@ async def stream_video(path: str, request: Request):
     range_header = request.headers.get("Range")
     
     if not range_header:
-        return FileResponse(video_path, media_type='video/mp4')
+        headers = {
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(file_size),
+            "Content-Type": "video/mp4",
+        }
+        return StreamingResponse(
+            chunked_video(video_path, 0, file_size - 1),
+            status_code=200,
+            headers=headers,
+        )
         
     try:
         range_str = range_header.replace("bytes=", "").strip()
