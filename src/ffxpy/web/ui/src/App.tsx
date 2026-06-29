@@ -378,6 +378,21 @@ export default function App() {
         handleCloseVideo()
       }
 
+      if (e.code === 'Digit1' && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+        e.preventDefault()
+        addJob('split')
+      }
+
+      if (e.code === 'Digit2' && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+        e.preventDefault()
+        addJob('crop')
+      }
+
+      if (e.code === 'Digit3' && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+        e.preventDefault()
+        addJob('merge')
+      }
+
       if (e.code === 'KeyH' && !isModalOpen && !isSettingsOpen && !e.ctrlKey && !e.altKey && !e.metaKey) {
         e.preventDefault()
         setIsHelpOpen(p => !p)
@@ -1126,7 +1141,13 @@ export default function App() {
                 </div>
               </div>
               <div className="space-y-4">
-                <h4 className="text-[10px] font-black text-cyan-600 uppercase tracking-[0.2em]">During Execution</h4>
+                <h4 className="text-[10px] font-black text-cyan-600 uppercase tracking-[0.2em]">Job Management</h4>
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center"><span className="text-xs font-bold text-gray-400">Add Split Job</span><kbd className="px-2.5 py-1 bg-white/[0.05] border border-white/[0.1] rounded text-[10px] font-mono text-gray-300 shadow-sm">Alt + 1</kbd></div>
+                  <div className="flex justify-between items-center"><span className="text-xs font-bold text-gray-400">Add Crop Job</span><kbd className="px-2.5 py-1 bg-white/[0.05] border border-white/[0.1] rounded text-[10px] font-mono text-gray-300 shadow-sm">Alt + 2</kbd></div>
+                  <div className="flex justify-between items-center"><span className="text-xs font-bold text-gray-400">Add Merge Job</span><kbd className="px-2.5 py-1 bg-white/[0.05] border border-white/[0.1] rounded text-[10px] font-mono text-gray-300 shadow-sm">Alt + 3</kbd></div>
+                </div>
+                <h4 className="text-[10px] font-black text-cyan-600 uppercase tracking-[0.2em] pt-4">During Execution</h4>
                 <div className="space-y-3">
                   <div className="flex justify-between items-center"><span className="text-xs font-bold text-gray-400">Run Flow</span><kbd className="px-2.5 py-1 bg-white/[0.05] border border-white/[0.1] rounded text-[10px] font-mono text-gray-300 shadow-sm">Ctrl + Enter</kbd></div>
                   <div className="flex justify-between items-center"><span className="text-xs font-bold text-gray-400">Cancel Flow</span><kbd className="px-2.5 py-1 bg-white/[0.05] border border-white/[0.1] rounded text-[10px] font-mono text-gray-300 shadow-sm">Esc</kbd></div>
