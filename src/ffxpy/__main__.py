@@ -340,6 +340,7 @@ async def merge(
         setting.input_path,
         setting.output_path,
         before_inputs={
+            '-fflags': '+genpts',
             '-f': 'concat',
             '-safe': '0',
         },
@@ -349,8 +350,7 @@ async def merge(
     if setting.input_path:
         setting.input_path.write_text(
             ''.join(
-                f"file '{path.resolve().as_posix()}'\n"
-                for path in setting.merge_paths
+                f"file '{path.resolve().as_posix()}'\n" for path in setting.merge_paths
             ),
             encoding='utf-8',
         )
@@ -505,7 +505,9 @@ async def ui(
         '[yellow]Note: For development, run `npm run dev` in src/ffxpy/web/ui[/yellow]'
     )
 
-    config = uvicorn.Config(web_app, host=host, port=port, log_level='info', timeout_graceful_shutdown=2)
+    config = uvicorn.Config(
+        web_app, host=host, port=port, log_level='info', timeout_graceful_shutdown=2
+    )
     server = uvicorn.Server(config)
     await server.serve()
 
@@ -985,6 +987,11 @@ def compile_commandline(
     if setting.preset:
         args += ['-preset', setting.preset]
     args += ['-rc', setting.rc]
+
+    if is_copy:
+        # Prevent edit lists (which cause VFR/max frame rate bugs on merge) by zeroing start PTS
+        args += ['-avoid_negative_ts', 'make_zero']
+
     if setting.overwrite:
         args.append('-y')
     output_path_final = output_path
