@@ -208,8 +208,7 @@ async def run_ffmpeg(
     if process.returncode != 0:
         error_msg = '\n'.join(error_log)
         console.print(
-            f'[red]ffmpeg failed with returncode {process.returncode}. '
-            'Last logs:[/red]'
+            f'[red]ffmpeg failed with returncode {process.returncode}. Last logs:[/red]'
         )
         console.print(error_msg)
         if on_progress:

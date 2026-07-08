@@ -8,7 +8,7 @@ from typing import Any, Dict, List
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from rich.console import Console
 
 from ffxpy.const import Command
@@ -44,13 +44,16 @@ async def startup_event():
     global shutdown_signal
     shutdown_signal = asyncio.Event()
     import sys
+
     if sys.platform == 'win32':
         # Silence the annoying ConnectionResetError when scrubbing video on Windows
         try:
             from asyncio.proactor_events import _ProactorBasePipeTransport
             from functools import wraps
 
-            original_call_connection_lost = _ProactorBasePipeTransport._call_connection_lost
+            original_call_connection_lost = (
+                _ProactorBasePipeTransport._call_connection_lost
+            )
 
             @wraps(original_call_connection_lost)
             def patched_call_connection_lost(self, exc):
@@ -58,7 +61,10 @@ async def startup_event():
                     original_call_connection_lost(self, exc)
                 except ConnectionResetError:
                     pass
-            _ProactorBasePipeTransport._call_connection_lost = patched_call_connection_lost
+
+            _ProactorBasePipeTransport._call_connection_lost = (
+                patched_call_connection_lost
+            )
         except Exception:
             pass
 
@@ -81,8 +87,10 @@ async def get_video_info(path: str):
     return await probe_video(video_path, ffprobe_path=settings.ffprobe_path)
 
 
-async def chunked_video(path: Path, start: int, end: int, chunk_size: int = 1024 * 1024):
-    video = open(path, "rb")
+async def chunked_video(
+    path: Path, start: int, end: int, chunk_size: int = 1024 * 1024
+):
+    video = open(path, 'rb')
     try:
         video.seek(start)
         remaining = end - start + 1
@@ -95,30 +103,31 @@ async def chunked_video(path: Path, start: int, end: int, chunk_size: int = 1024
     finally:
         video.close()
 
+
 @app.get('/api/stream')
 async def stream_video(path: str, request: Request):
     video_path = Path(path)
     if not video_path.exists():
         raise HTTPException(status_code=404, detail='File not found')
-    
+
     file_size = video_path.stat().st_size
-    range_header = request.headers.get("Range")
-    
+    range_header = request.headers.get('Range')
+
     if not range_header:
         headers = {
-            "Accept-Ranges": "bytes",
-            "Content-Length": str(file_size),
-            "Content-Type": "video/mp4",
+            'Accept-Ranges': 'bytes',
+            'Content-Length': str(file_size),
+            'Content-Type': 'video/mp4',
         }
         return StreamingResponse(
             chunked_video(video_path, 0, file_size - 1),
             status_code=200,
             headers=headers,
         )
-        
+
     try:
-        range_str = range_header.replace("bytes=", "").strip()
-        parts = range_str.split("-")
+        range_str = range_header.replace('bytes=', '').strip()
+        parts = range_str.split('-')
         start = int(parts[0])
         end = int(parts[1]) if len(parts) > 1 and parts[1] else file_size - 1
     except Exception:
@@ -130,14 +139,14 @@ async def stream_video(path: str, request: Request):
     MAX_CHUNK_SIZE = 2 * 1024 * 1024
     if end - start > MAX_CHUNK_SIZE:
         end = start + MAX_CHUNK_SIZE - 1
-        
+
     headers = {
-        "Content-Range": f"bytes {start}-{end}/{file_size}",
-        "Accept-Ranges": "bytes",
-        "Content-Length": str(end - start + 1),
-        "Content-Type": "video/mp4",
+        'Content-Range': f'bytes {start}-{end}/{file_size}',
+        'Accept-Ranges': 'bytes',
+        'Content-Length': str(end - start + 1),
+        'Content-Type': 'video/mp4',
     }
-    
+
     return StreamingResponse(
         chunked_video(video_path, start, end),
         status_code=206,
@@ -156,29 +165,34 @@ async def close_video():
 async def open_file_dialog():
     import tkinter as tk
     from tkinter import filedialog
-    
+
     def _open():
         try:
             root = tk.Tk()
-            root.attributes("-topmost", True)
+            root.attributes('-topmost', True)
             root.withdraw()
             file_path = filedialog.askopenfilename(
-                title="Select Video File",
-                filetypes=[("Video files", "*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm *.ts *.m2ts"), ("All files", "*.*")]
+                title='Select Video File',
+                filetypes=[
+                    (
+                        'Video files',
+                        '*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm *.ts *.m2ts',
+                    ),
+                    ('All files', '*.*'),
+                ],
             )
             root.destroy()
             return file_path
-        except Exception as e:
+        except Exception:
             return None
-            
+
     loop = asyncio.get_event_loop()
     path = await loop.run_in_executor(None, _open)
-    
-    if not path:
-        return {"path": None}
-    
-    return {"path": str(Path(path).resolve().as_posix())}
 
+    if not path:
+        return {'path': None}
+
+    return {'path': str(Path(path).resolve().as_posix())}
 
 
 @app.get('/api/keyframes')
@@ -302,7 +316,9 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
             job_name = job.name or f'Job #{index + 1}'
             if job.command == Command.SPLIT:
                 if not job.setting.input_path:
-                    raise ValueError(f'"{job_name}" has no input path. Please ensure global video is loaded or input_path is defined in YAML.')
+                    raise ValueError(
+                        f'"{job_name}" has no input path. Please ensure global video is loaded or input_path is defined in YAML.'
+                    )
                 try:
                     info = await probe_video(
                         job.setting.input_path, ffprobe_path=settings.ffprobe_path

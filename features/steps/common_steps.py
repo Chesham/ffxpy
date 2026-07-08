@@ -112,10 +112,12 @@ def step_then_return_code_should_be(context, expected_code):
 
 @when('我透過 Web 背景常駐程式執行工作流檔案 "{file_name}"')
 def step_when_run_web_background_flow(context, file_name):
-    import yaml
     import asyncio
     import uuid
-    from ffxpy.web.main import run_flow_background, active_jobs
+
+    import yaml
+
+    from ffxpy.web.main import active_jobs, run_flow_background
 
     file_path = context.working_dir / file_name
     with open(file_path, 'r', encoding='utf-8') as f:
@@ -128,7 +130,7 @@ def step_when_run_web_background_flow(context, file_name):
     if 'setting' not in data:
         data['setting'] = {}
     data['setting']['working_dir'] = str(context.working_dir)
-    
+
     # Run the background task synchronously within the test
     asyncio.run(run_flow_background(job_id, data))
 
@@ -137,6 +139,5 @@ def step_when_run_web_background_flow(context, file_name):
     while not active_jobs[job_id].empty():
         msg = active_jobs[job_id].get_nowait()
         if msg.get('status') == 'failed':
-            print("Web flow failed:", msg.get('error'))
+            print('Web flow failed:', msg.get('error'))
             context.return_code = 1
-
