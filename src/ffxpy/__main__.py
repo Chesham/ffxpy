@@ -935,7 +935,9 @@ def compile_commandline(
     if setting.start:
         if is_copy:
             # Copy mode: simple fast seek before -i
-            args += ['-ss', str(setting.start)]
+            # Add a 50ms epsilon to prevent undershooting the keyframe due to float precision
+            epsilon = timedelta(milliseconds=50)
+            args += ['-ss', str(setting.start + epsilon)]
         elif setting.start > seek_buffer:
             # Re-encoding: hybrid seek (step 1: fast jump to 30s before target)
             args += ['-ss', str(setting.start - seek_buffer)]
