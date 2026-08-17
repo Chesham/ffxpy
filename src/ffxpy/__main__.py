@@ -491,19 +491,42 @@ async def crop(
 async def ui(
     port: int = typer.Option(8000, help='API port'),
     host: str = typer.Option('127.0.0.1', help='API host'),
+    reload: bool = typer.Option(
+        False,
+        '--reload',
+        help='Auto-restart the backend whenever its source files change (development).',
+    ),
 ):
     """
     Launch the Web UI for visual video editing.
     """
     import uvicorn
 
-    from ffxpy.web.main import app as web_app
-
     console.print('[bold cyan]Starting ffxpy Web UI Backend...[/bold cyan]')
     console.print(f'API available at: [blue]http://{host}:{port}[/blue]')
     console.print(
-        '[yellow]Note: For development, run `npm run dev` in src/ffxpy/web/ui[/yellow]'
+        '[yellow]Note: For frontend live reload, run `npm run dev` in src/ffxpy/web/ui[/yellow]'
     )
+
+    if reload:
+        # uvicorn's file-watching reloader requires the app be given as an
+        # import string (it re-imports it in a fresh worker process on every
+        # restart) and drives its own blocking supervisor loop, so it can't
+        # go through the same `uvicorn.Server().serve()` path used below.
+        console.print(
+            '[yellow]Reload mode: backend restarts automatically on source changes[/yellow]'
+        )
+        uvicorn.run(
+            'ffxpy.web.main:app',
+            host=host,
+            port=port,
+            log_level='info',
+            reload=True,
+            reload_dirs=[str(Path(__file__).parent)],
+        )
+        return
+
+    from ffxpy.web.main import app as web_app
 
     config = uvicorn.Config(
         web_app, host=host, port=port, log_level='info', timeout_graceful_shutdown=2
