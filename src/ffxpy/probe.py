@@ -15,6 +15,7 @@ class StreamInfo(pydantic.BaseModel):
     height: int | None = None
     field_order: str | None = None
     bit_rate: int | None = None
+    r_frame_rate: str | None = None
 
 
 class VideoInfo(pydantic.BaseModel):
@@ -121,6 +122,7 @@ async def probe_video(path: Path, ffprobe_path: str = 'ffprobe') -> VideoInfo:
             height=s.get('height'),
             field_order=s.get('field_order'),
             bit_rate=int(s.get('bit_rate')) if s.get('bit_rate') else None,
+            r_frame_rate=s.get('r_frame_rate'),
         )
         for s in streams_data
     ]

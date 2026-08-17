@@ -53,6 +53,7 @@ class Setting(pydantic_settings.BaseSettings):
     with_split: bool = True
     scale: str | None = None
     crop: str | None = None
+    fps: str | None = None
     merge_paths: list[Path] = pydantic.Field(default_factory=list)
     keep_temp: bool = False
     skip_validation: bool = False
@@ -95,13 +96,14 @@ class Setting(pydantic_settings.BaseSettings):
         if not os.access(self.ffprobe_path, os.X_OK):
             raise ValueError(f'ffprobe at {self.ffprobe_path} is not executable')
 
-        # Smart Codec Switching: crop or scale requires re-encoding, cannot use 'copy'
-        if self.crop or self.scale:
-            if self.video_codec == 'copy':
-                self.video_codec = 'libx264'
-                # Ensure a default bitrate if we auto-switched
-                if not self.video_bitrate:
-                    self.video_bitrate = '5M'
+        # crop/scale/fps require a real filter graph, which ffmpeg rejects
+        # alongside `-c:v copy` ("Filtering and streamcopy cannot be used
+        # together") -- deliberately not auto-switched to a real codec here.
+        # That decision belongs to the user, not this layer: it used to
+        # silently flip video_codec to libx264, which fought explicit
+        # video_codec=copy elsewhere (e.g. a merge job inheriting a filter
+        # setting) and made ffmpeg's own failure the only honest signal when
+        # a user's chosen combination genuinely doesn't work.
 
         if self.video_codec != 'copy' and not self.video_bitrate:
             raise ValueError('video_bitrate must be set when video_codec is not "copy"')

@@ -768,6 +768,7 @@ async def flow(
                 before_inputs = {}
                 if job.command == Command.MERGE:
                     before_inputs = {
+                        '-fflags': '+genpts',
                         '-f': 'concat',
                         '-safe': '0',
                     }
@@ -996,11 +997,44 @@ def compile_commandline(
         final_filters.append(f'scale={setting.scale}')
     if setting.crop:
         final_filters.append(f'crop={setting.crop}')
+    if setting.fps:
+        # ffmpeg's `fps` filter actually retimes by duplicating/dropping frames to
+        # hit the target rate, unlike `-r` which just relabels timestamps -- needed
+        # because concat-copying clips transcoded at different native frame rates
+        # (e.g. one 29.97fps source mixed with 59.94fps sources) plays back with
+        # stutter/lag on whichever segments don't match the container's assumed
+        # rate, worst on the last (often longest) segment.
+        final_filters.append(f'fps={setting.fps}')
+
+    if not is_copy and setting.start:
+        # Accurate (post-input) seeking decodes from an earlier point and drops
+        # leading frames/samples, but video and audio don't necessarily discard to
+        # the exact same wall-clock instant (encoder lookahead/priming differs per
+        # stream), so each stream's re-encoded output can start at a slightly
+        # different PTS. That per-clip offset is invisible alone but compounds
+        # once clips are concatenated. Reset both streams to start at PTS 0
+        # independently so every clip's audio and video are aligned at frame 1.
+        final_filters.append('setpts=PTS-STARTPTS')
 
     if final_filters:
         args += ['-vf', ','.join(final_filters)]
 
-    args += ['-c:v', setting.video_codec, '-c:a', setting.audio_codec]
+    audio_codec = setting.audio_codec
+    if not is_copy and (setting.start or setting.end) and audio_codec == 'copy':
+        # A copied audio stream can only start at its own packet boundary, but the
+        # re-encoded video is cut with frame accuracy -- forcing them to diverge by
+        # up to one audio frame per clip, which compounds visibly once clips are
+        # concatenated. Re-encode audio too whenever we're doing an accurate cut.
+        console.print(
+            '[yellow]Accurate cut with re-encoded video but audio_codec=copy '
+            'would desync; forcing audio re-encode (aac) for this job.[/yellow]'
+        )
+        audio_codec = 'aac'
+
+    if not is_copy and setting.start and audio_codec != 'copy':
+        args += ['-af', 'asetpts=PTS-STARTPTS']
+
+    args += ['-c:v', setting.video_codec, '-c:a', audio_codec]
     if setting.video_bitrate:
         args += ['-b:v', setting.video_bitrate]
     if setting.audio_bitrate:

@@ -409,7 +409,7 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
             filters = job_filters[index]
             before_inputs = {}
             if job.command == Command.MERGE:
-                before_inputs = {'-f': 'concat', '-safe': '0'}
+                before_inputs = {'-fflags': '+genpts', '-f': 'concat', '-safe': '0'}
                 if job.setting.input_path:
                     lines = [
                         f"file '{p.resolve().as_posix()}'\n"

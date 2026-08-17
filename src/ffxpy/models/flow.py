@@ -51,8 +51,21 @@ class Flow(pydantic.BaseModel):
         if self.setting:
             parent_setting = self.setting.model_dump(exclude_unset=True)
             for idx, job in enumerate(self.jobs):
+                inherited_setting = parent_setting
+                if job.command == Command.MERGE:
+                    # crop/scale/fps describe how to re-encode an individual clip;
+                    # a merge job just concatenates already-processed clips, so
+                    # inheriting these from the flow-level setting would silently
+                    # add a video filter to a job whose video_codec is explicitly
+                    # copy -- ffmpeg rejects filters combined with stream copy, so
+                    # a merge job that never asked for these would fail anyway.
+                    inherited_setting = {
+                        k: v
+                        for k, v in parent_setting.items()
+                        if k not in ('crop', 'scale', 'fps')
+                    }
                 job.setting = Setting.model_validate(
-                    parent_setting | job.setting.model_dump(exclude_unset=True)
+                    inherited_setting | job.setting.model_dump(exclude_unset=True)
                 )
 
                 if job.command == Command.SPLIT:
