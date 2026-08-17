@@ -1,15 +1,20 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { 
-  Loader2, CheckCircle2, Plus, ChevronLeft, ChevronRight, 
-  Settings2, Clock, Code, LocateFixed, 
-  History as HistoryIcon, Layers, CircleDot, X, AlertCircle, PlayCircle, Film, Boxes, GripVertical, HelpCircle
+import {
+  Loader2, CheckCircle2, Plus, ChevronLeft, ChevronRight,
+  Settings2, Clock, Code, LocateFixed,
+  History as HistoryIcon, Layers, CircleDot, X, AlertCircle, PlayCircle, Film, Boxes, GripVertical, HelpCircle, Folder, FolderOpen
 } from 'lucide-react'
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 import yaml from 'js-yaml'
 
 function cn(...inputs: ClassValue[]) { return twMerge(clsx(inputs)) }
-const API_BASE = import.meta.env.DEV ? 'http://localhost:8000' : ''
+// Always relative: in prod the backend serves this same page, and in dev
+// vite.config.ts proxies /api to the backend server-to-server. This avoids
+// ever hardcoding a host/port that the browser has to reach directly, which
+// breaks under WSL/remote setups (wrong hostname, or another unrelated
+// service already shadowing that port on whatever machine the browser is on).
+const API_BASE = ''
 const normalizePath = (p: string) => p.replace(/\\/g, '/')
 const generateId = () => typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID().split('-')[0] : Math.random().toString(36).substring(2, 10)
 
@@ -177,38 +182,256 @@ function VisualCropper({
   )
 }
 
-interface StreamInfo { index: number; codec_type: string; width?: number; height?: number }
-interface VideoInfo { format_name: string; duration: string; duration_sec: number; streams: StreamInfo[] }
-interface JobSetting { start?: string; end?: string; video_codec?: string; video_bitrate?: string; audio_codec?: string; audio_bitrate?: string; scale?: string; crop?: string; output_dir?: string; output_path?: string; keep_temp?: boolean; skip_existing?: boolean; deinterlace?: boolean }
+interface StreamInfo { index: number; codec_type: string; width?: number; height?: number; r_frame_rate?: string; bit_rate?: number }
+interface VideoInfo { format_name: string; duration: string; duration_sec: number; streams: StreamInfo[]; bit_rate?: number }
+interface JobSetting { input_path?: string; merge_paths?: string[]; start?: string; end?: string; video_codec?: string; video_bitrate?: string; audio_codec?: string; audio_bitrate?: string; scale?: string; crop?: string; fps?: string; output_dir?: string; output_path?: string; keep_temp?: boolean; skip_existing?: boolean; deinterlace?: boolean }
 interface Job { id: string; name: string; command: 'split' | 'merge' | 'crop'; setting: JobSetting }
 interface JobStatus { status: string; completed: number; total: number; name?: string }
 interface WorkflowState { status: string; overall_completed: number; overall_total: number; total_jobs: number; jobStatuses: Record<number, JobStatus> }
+
+// A single loaded source file in the Media Pool. Each job binds to one (or more, for merge) of these by path.
+interface MediaSource {
+  path: string
+  info: VideoInfo
+  establishedMap: Record<string, { prev?: number, next?: number }>
+}
+
+interface BrowseEntry { name: string; path: string; is_dir: boolean; size: number | null }
+interface BrowseResult { path: string; parent: string | null; entries: BrowseEntry[]; warning?: string }
+
+function formatBytes(n: number) {
+  if (n < 1024) return `${n} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let v = n / 1024, i = 0
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++ }
+  return `${v.toFixed(1)} ${units[i]}`
+}
+
+// In-page directory browser backed by /api/browse. Replaces the native OS file
+// picker: browsers never expose a real filesystem path from <input type="file">,
+// and this app needs one to hand off to ffmpeg, so it renders its own folder
+// navigator instead of shelling out to a GUI toolkit on the backend.
+function FileBrowserModal({ onConfirm, onClose }: { onConfirm: (paths: string[]) => void, onClose: () => void }) {
+  const [currentPath, setCurrentPath] = useState<string | null>(null)
+  const [parent, setParent] = useState<string | null>(null)
+  const [entries, setEntries] = useState<BrowseEntry[]>([])
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [manualPath, setManualPath] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [warning, setWarning] = useState<string | null>(null)
+  const [highlight, setHighlight] = useState(-1)
+  const listRef = useRef<HTMLDivElement>(null)
+
+  // Tracked so an in-flight debounced navigation can tell, once it resolves,
+  // whether the user has kept typing since -- and if so, skip clobbering
+  // whatever they've typed with the (now stale) resolved directory path.
+  const manualPathRef = useRef(manualPath)
+  manualPathRef.current = manualPath
+
+  const load = useCallback(async (path?: string | null, opts?: { keepInputIfStale?: boolean }) => {
+    setLoading(true); setError(null); setWarning(null)
+    try {
+      const url = path ? `${API_BASE}/api/browse?path=${encodeURIComponent(path)}` : `${API_BASE}/api/browse`
+      const res = await fetch(url)
+      if (!res.ok) {
+        const body = await res.json().catch(() => null)
+        throw new Error(body?.detail || `Failed to browse directory (HTTP ${res.status})`)
+      }
+      const d: BrowseResult = await res.json()
+      setCurrentPath(d.path)
+      setParent(d.parent)
+      setEntries(d.entries)
+      setWarning(d.warning || null)
+      if (!opts?.keepInputIfStale || manualPathRef.current === path) {
+        setManualPath(d.path)
+      }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally { setLoading(false) }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  // The text after the last "/" is treated as a live filter against the
+  // already-loaded directory (no network round-trip) instead of part of the
+  // path to navigate to -- typing "/D" inside a loaded folder filters its
+  // entries down to names starting with "D" (case-sensitive, matching Linux).
+  const stripTrailingSlash = (p: string | null) => (p || '').replace(/\/+$/, '') || '/'
+  // True right after a load, before the user has typed anything past it -- in
+  // this state the last path segment is the loaded directory's own name, not
+  // filter text, so it must never be parsed as one (that would misread e.g.
+  // ".../Downloads" as filtering "Downloads" out of its parent and silently
+  // auto-navigate up a level).
+  const atRest = stripTrailingSlash(manualPath) === stripTrailingSlash(currentPath)
+  const lastSlash = manualPath.lastIndexOf('/')
+  const dirPart = lastSlash >= 0 ? (manualPath.slice(0, lastSlash) || '/') : ''
+  const filterPart = lastSlash >= 0 ? manualPath.slice(lastSlash + 1) : manualPath
+  const inFilterMode = !atRest && lastSlash >= 0 && stripTrailingSlash(dirPart) === stripTrailingSlash(currentPath)
+
+  // Debounce: once the user pauses typing a directory portion that isn't the
+  // one already loaded, jump to it automatically. Only the directory portion
+  // (not the trailing filter text) is ever sent to /api/browse.
+  useEffect(() => {
+    if (atRest || inFilterMode || !dirPart) return
+    const timer = setTimeout(() => { load(dirPart, { keepInputIfStale: true }) }, 500)
+    return () => clearTimeout(timer)
+  }, [dirPart, inFilterMode, atRest, load])
+
+  const filteredEntries = inFilterMode && filterPart
+    ? entries.filter(e => e.name.startsWith(filterPart))
+    : entries
+
+  // Keep a highlighted candidate ready so Enter works immediately while typing.
+  useEffect(() => {
+    setHighlight(inFilterMode && filterPart && filteredEntries.length > 0 ? 0 : -1)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entries, filterPart, inFilterMode])
+
+  useEffect(() => {
+    if (highlight < 0) return
+    listRef.current?.children[highlight]?.scrollIntoView({ block: 'nearest' })
+  }, [highlight])
+
+  const toggleSelect = (path: string) => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (next.has(path)) next.delete(path); else next.add(path)
+      return next
+    })
+  }
+
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setHighlight(h => Math.min(filteredEntries.length - 1, h + 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setHighlight(h => Math.max(0, h - 1))
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      const target = highlight >= 0 ? filteredEntries[highlight] : null
+      if (target) {
+        if (target.is_dir) load(target.path); else toggleSelect(target.path)
+      } else {
+        load(dirPart || manualPath)
+      }
+    }
+  }
+
+  // Close only on a genuine click on the backdrop itself -- both mousedown and
+  // mouseup need to land on the backdrop. A plain onClick={onClose} here would
+  // also fire when the user drags to select text inside the modal and happens
+  // to release the mouse button outside of it.
+  const backdropMouseDownOnSelf = useRef(false)
+
+  return (
+    <div
+      className="fixed inset-0 z-[130] flex items-center justify-center bg-black/80 backdrop-blur-md animate-in fade-in duration-300"
+      onMouseDown={e => { backdropMouseDownOnSelf.current = e.target === e.currentTarget }}
+      onMouseUp={e => {
+        if (backdropMouseDownOnSelf.current && e.target === e.currentTarget) onClose()
+        backdropMouseDownOnSelf.current = false
+      }}
+    >
+      <div
+        className="w-full max-w-2xl h-[70vh] bg-[#0c0c0c] border border-white/10 rounded-3xl shadow-[0_0_50px_rgba(0,0,0,0.8)] flex flex-col overflow-hidden animate-in zoom-in-95 duration-300"
+        onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }}
+      >
+        <div className="p-6 border-b border-white/[0.05] flex justify-between items-center shrink-0">
+          <h3 className="text-sm font-black uppercase tracking-[0.3em] text-white flex items-center gap-3"><FolderOpen size={16} className="text-cyan-500"/> Select Video File(s)</h3>
+          <button onClick={onClose} className="p-2 bg-white/[0.03] rounded-full hover:bg-white/[0.08] transition-colors"><X size={18}/></button>
+        </div>
+        <div className="px-6 py-3 border-b border-white/[0.03] flex gap-2 items-center shrink-0">
+          <button onClick={() => parent && load(parent)} disabled={!parent} title="Up one level" className="p-2 rounded-lg bg-white/[0.03] hover:bg-white/[0.08] disabled:opacity-20 disabled:cursor-not-allowed text-gray-400 transition-colors"><ChevronLeft size={16}/></button>
+          <input
+            className="flex-1 bg-black border border-white/[0.05] rounded-xl px-3 py-2 text-xs text-white font-mono outline-none focus:border-cyan-500/30"
+            value={manualPath}
+            onChange={e => setManualPath(normalizePath(e.target.value))}
+            onKeyDown={handleInputKeyDown}
+          />
+          <button onClick={() => load(dirPart || manualPath)} className="px-3 py-2 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-white text-[10px] font-black uppercase tracking-widest transition-colors">Go</button>
+        </div>
+        <div ref={listRef} className="flex-1 overflow-y-auto custom-scrollbar px-2 py-2">
+          {loading && <div className="text-center text-gray-600 text-xs py-10 uppercase tracking-widest font-bold">Loading...</div>}
+          {error && (
+            <div className="flex flex-col items-center gap-3 py-10">
+              <span className="text-center text-red-500 text-xs uppercase tracking-widest font-bold px-6">{error}</span>
+              <button onClick={() => load(currentPath)} className="px-4 py-1.5 rounded-full bg-white/[0.05] hover:bg-white/[0.1] text-gray-300 text-[10px] font-black uppercase tracking-widest transition-colors">Retry</button>
+            </div>
+          )}
+          {!loading && !error && warning && (
+            <div className="flex items-center gap-2 px-4 py-2 mb-1 rounded-xl bg-amber-500/10 text-amber-500 text-[10px] font-bold">
+              <AlertCircle size={12} className="shrink-0"/> {warning}
+            </div>
+          )}
+          {!loading && !error && filteredEntries.length === 0 && <div className="text-center text-gray-700 text-xs italic py-10">{filterPart ? 'No matches' : 'Empty directory'}</div>}
+          {!loading && !error && filteredEntries.map((entry, idx) => {
+            const isSelected = !entry.is_dir && selected.has(entry.path)
+            const isHighlighted = idx === highlight
+            return (
+              <div
+                key={entry.path}
+                onMouseEnter={() => setHighlight(idx)}
+                onClick={() => entry.is_dir ? load(entry.path) : toggleSelect(entry.path)}
+                className={cn(
+                  "flex items-center gap-3 px-4 py-2.5 rounded-xl cursor-pointer transition-colors",
+                  isSelected ? "bg-cyan-500/10" : isHighlighted ? "bg-white/[0.06]" : "hover:bg-white/[0.03]"
+                )}
+              >
+                {entry.is_dir
+                  ? <Folder size={14} className="text-amber-500 shrink-0"/>
+                  : <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(entry.path)} onClick={e => e.stopPropagation()} className="shrink-0"/>}
+                <span className={cn("text-xs truncate flex-1", entry.is_dir ? "text-gray-300" : "text-gray-400")}>{entry.name}</span>
+                {!entry.is_dir && entry.size != null && <span className="text-[10px] text-gray-700 font-mono shrink-0">{formatBytes(entry.size)}</span>}
+                {entry.is_dir && <ChevronRight size={14} className="text-gray-700 shrink-0"/>}
+              </div>
+            )
+          })}
+        </div>
+        <div className="p-6 border-t border-white/[0.03] flex justify-between items-center shrink-0">
+          <span className="text-[10px] text-gray-600 font-bold uppercase tracking-widest truncate">{currentPath}</span>
+          <button
+            onClick={() => onConfirm(Array.from(selected))}
+            disabled={selected.size === 0}
+            className="shrink-0 px-8 py-2.5 bg-cyan-600 hover:bg-cyan-400 disabled:opacity-20 disabled:cursor-not-allowed text-white font-black text-[10px] tracking-[0.2em] rounded-full transition-all uppercase"
+          >
+            Add {selected.size > 0 ? selected.size : ''} Source{selected.size !== 1 ? 's' : ''}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 interface GlobalSetting {
   video_codec: string;
   audio_codec: string;
   video_bitrate: string;
+  audio_bitrate?: string;
   overwrite: boolean;
   keep_temp: boolean;
   skip_existing: boolean;
   deinterlace: boolean;
   output_dir: string;
   crop?: string;
+  fps?: string;
 }
 
 export default function App() {
-  const [videoPath, setVideoPath] = useState('')
-  const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null)
+  // Media Pool: every source file the user has loaded, keyed by (normalized) path.
+  const [sources, setSources] = useState<Record<string, MediaSource>>({})
+  const [sourceOrder, setSourceOrder] = useState<string[]>([])
+  const [activeSourcePath, setActiveSourcePath] = useState<string>('')
   const [currentTime, setCurrentTime] = useState(0)
   const [jobs, setJobs] = useState<Job[]>([])
   const [activeJobId, setActiveJobId] = useState<string | null>(null)
   const [globalSetting, setGlobalSetting] = useState<GlobalSetting>(() => {
     const saved = localStorage.getItem('ffxpy_global_settings')
-    return saved ? JSON.parse(saved) : { video_codec: 'copy', audio_codec: 'copy', video_bitrate: '', overwrite: true, keep_temp: false, skip_existing: false, deinterlace: false, output_dir: '', crop: '' }
+    return saved ? JSON.parse(saved) : { video_codec: 'copy', audio_codec: 'copy', video_bitrate: '', audio_bitrate: '', overwrite: true, keep_temp: false, skip_existing: false, deinterlace: false, output_dir: '', crop: '' }
   })
   const [yamlText, setYamlText] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [keyframes, setKeyframes] = useState<number[]>([])
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<'editor' | 'yaml'>('editor')
   const [workflow, setWorkflow] = useState<WorkflowState | null>(null)
@@ -217,15 +440,46 @@ export default function App() {
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [editTime, setEditTime] = useState('')
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
-  const [tempVideoPath, setTempVideoPath] = useState('')
+  const [newSourcePath, setNewSourcePath] = useState('')
   const [isTyping, setIsTyping] = useState(false)
   const [isCropMode, setIsCropMode] = useState(false)
   const [isHelpOpen, setIsHelpOpen] = useState(false)
+  const [isBrowserOpen, setIsBrowserOpen] = useState(false)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
-  
+
   const videoRef = useRef<HTMLVideoElement>(null)
   const settingsInputRef = useRef<HTMLInputElement>(null)
   const isSyncingFromYaml = useRef(false)
+  const sourcesRef = useRef(sources)
+  sourcesRef.current = sources
+
+  const videoInfo = sources[activeSourcePath]?.info ?? null
+  const establishedMap = sources[activeSourcePath]?.establishedMap ?? {}
+  const fpsToFloat = (fps: string): number => {
+    const [num, den] = fps.split('/')
+    const d = parseFloat(den)
+    return d ? parseFloat(num) / d : parseFloat(num)
+  }
+  const bitrateStrToBytes = (s: string | undefined): number => {
+    const m = s?.trim().match(/^([\d.]+)\s*([kKmMgG]?)/)
+    if (!m) return 0
+    const mult = { k: 1_000, m: 1_000_000, g: 1_000_000_000 }[m[2].toLowerCase()] ?? 1
+    return parseFloat(m[1]) * mult
+  }
+  // Reference-only hint (never auto-applied) so users don't have to look up a
+  // source's native frame rate themselves before deciding whether/what to type.
+  const fpsHintFor = (path: string | undefined): string | undefined =>
+    path ? sources[path]?.info?.streams.find(s => s.codec_type === 'video')?.r_frame_rate : undefined
+  const bitrateHintFor = (path: string | undefined): string | undefined => {
+    const br = path ? sources[path]?.info?.bit_rate : undefined
+    return br ? `${(br / 1_000_000).toFixed(1)}M` : undefined
+  }
+  const audioBitrateHintFor = (path: string | undefined): string | undefined => {
+    const br = path ? sources[path]?.info?.streams.find(s => s.codec_type === 'audio')?.bit_rate : undefined
+    return br ? `${Math.round(br / 1000)}k` : undefined
+  }
+  const sourceList = sourceOrder.map(p => sources[p]).filter((s): s is MediaSource => !!s)
+  const basename = (p: string) => p.split('/').pop() || p
 
   const handleDragStart = (idx: number) => {
     setDragIdx(idx)
@@ -249,55 +503,90 @@ export default function App() {
     if (videoRef.current) videoRef.current.currentTime = val
   }
 
-  const handleProbe = useCallback(async (path: string, preserveJobs: boolean = false) => {
+  // Probe a file and add it to the Media Pool. No-ops (just activates) if already loaded.
+  const addSource = useCallback(async (rawPath: string, opts?: { silent?: boolean }) => {
+    const path = normalizePath(rawPath)
     if (!path) return
+    if (sourcesRef.current[path]) {
+      setActiveSourcePath(path)
+      return
+    }
     setIsSubmitting(true); setError(null)
     try {
       const res = await fetch(`${API_BASE}/api/probe?path=${encodeURIComponent(path)}`)
-      if (!res.ok) throw new Error('Probe failed')
+      if (!res.ok) throw new Error(`Probe failed: ${path}`)
       const d = await res.json(), m = d.duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:([\d.]+)S)?/)
       const ts = (parseInt(m?.[1]||'0')*3600)+(parseInt(m?.[2]||'0')*60)+parseFloat(m?.[3]||'0')
-      
-      // Auto-Reset UI State for new video
-      if (!preserveJobs) {
-        setJobs([])
-        setActiveJobId(null)
-        setKeyframes([])
-      }
+
+      setSources(prev => ({ ...prev, [path]: { path, info: { ...d, duration_sec: ts }, establishedMap: {} } }))
+      setSourceOrder(prev => prev.includes(path) ? prev : [...prev, path])
+      setActiveSourcePath(path)
       setCurrentTime(0)
-      setVideoPath(path)
-      setEstablishedMap({})
-
-      setVideoInfo({ ...d, duration_sec: ts })
       setEditTime(formatTime(0))
-      if (!preserveJobs) setKeyframes([])
 
-      if (d.bit_rate) {
-        const kbps = Math.round(d.bit_rate / 1000)
-        const bitrateStr = kbps >= 1000 ? `${parseFloat((kbps / 1000).toFixed(2))}M` : `${kbps}k`
-        setGlobalSetting(prev => {
-          if (prev.video_bitrate !== bitrateStr) {
-            setToastMessage(`Auto-detected bitrate: ${bitrateStr}`)
-            return { ...prev, video_bitrate: bitrateStr }
-          }
-          return prev
-        })
-      }
-
-    } catch (e: unknown) { setError(e instanceof Error ? e.message : String(e)) } finally { setIsSubmitting(false) }
+      // Every source seeds the global defaults up to the highest value seen
+      // across the whole Media Pool so far -- not just the first one added --
+      // so mixing a low-bitrate/low-fps source with a higher one still lands
+      // on the higher source's numbers. Compared directly against the field's
+      // current live value (not a ref) each time, so this works the same
+      // whether that value came from an earlier auto-fill, a manual edit, or
+      // localStorage from a previous session -- always just "is this source
+      // higher than what's there now". These are plain values the user can
+      // freely overwrite -- harmless if left as-is alongside
+      // video_codec/audio_codec=copy (ffmpeg just ignores bitrate on a copied
+      // stream), but NOT harmless for fps: a copy job with a filter attached
+      // is invalid and ffmpeg will refuse to run it, which is exactly the
+      // point -- an incompatible combination should fail loudly with a log
+      // instead of being silently "fixed" for the user.
+      const videoStream = d.streams?.find((s: StreamInfo) => s.codec_type === 'video')
+      const audioStream = d.streams?.find((s: StreamInfo) => s.codec_type === 'audio')
+      const seeded: string[] = []
+      setGlobalSetting(prev => {
+        const next = { ...prev }
+        if (d.bit_rate && d.bit_rate > bitrateStrToBytes(prev.video_bitrate)) {
+          const kbps = Math.round(d.bit_rate / 1000)
+          next.video_bitrate = kbps >= 1000 ? `${parseFloat((kbps / 1000).toFixed(2))}M` : `${kbps}k`
+          seeded.push(`video ${next.video_bitrate}`)
+        }
+        if (audioStream?.bit_rate && audioStream.bit_rate > bitrateStrToBytes(prev.audio_bitrate)) {
+          next.audio_bitrate = `${Math.round(audioStream.bit_rate / 1000)}k`
+          seeded.push(`audio ${next.audio_bitrate}`)
+        }
+        const fpsVal = videoStream?.r_frame_rate ? fpsToFloat(videoStream.r_frame_rate) : 0
+        if (fpsVal > (prev.fps ? fpsToFloat(prev.fps) : 0)) {
+          next.fps = videoStream!.r_frame_rate
+          seeded.push(`fps ${next.fps}`)
+        }
+        if (seeded.length) setToastMessage(`Auto-detected (max across sources): ${seeded.join(', ')}`)
+        return next
+      })
+    } catch (e: unknown) {
+      if (!opts?.silent) setError(e instanceof Error ? e.message : String(e))
+    } finally { setIsSubmitting(false) }
   }, [])
 
+  const addSources = useCallback(async (paths: string[]) => {
+    for (const p of paths) {
+      await addSource(p)
+    }
+  }, [addSource])
+
+  const removeSource = (path: string) => {
+    const inUse = jobs.some(j => j.setting.input_path === path || j.setting.merge_paths?.includes(path))
+    if (inUse) return
+    setSources(prev => { const next = { ...prev }; delete next[path]; return next })
+    const remaining = sourceOrder.filter(p => p !== path)
+    setSourceOrder(remaining)
+    if (activeSourcePath === path) setActiveSourcePath(remaining[0] || '')
+  }
+
   const openSettings = useCallback(() => {
-    setTempVideoPath(videoPath)
     setIsSettingsOpen(true)
-  }, [videoPath])
+  }, [])
 
   const applySettings = useCallback(() => {
-    if (tempVideoPath !== videoPath) {
-      handleProbe(tempVideoPath, videoPath === '')
-    }
     setIsSettingsOpen(false)
-  }, [tempVideoPath, videoPath, handleProbe])
+  }, [])
 
   useEffect(() => {
     if (isSettingsOpen) {
@@ -315,34 +604,12 @@ export default function App() {
   }, [toastMessage])
 
   useEffect(() => {
-    if (!isSettingsOpen || !tempVideoPath) return
-    const timer = setTimeout(async () => {
-      try {
-        const res = await fetch(`${API_BASE}/api/probe?path=${encodeURIComponent(tempVideoPath)}`)
-        if (res.ok) {
-          const d = await res.json()
-          if (d.bit_rate) {
-            const kbps = Math.round(d.bit_rate / 1000)
-            const bitrateStr = kbps >= 1000 ? `${parseFloat((kbps / 1000).toFixed(2))}M` : `${kbps}k`
-            setGlobalSetting(prev => {
-              if (prev.video_bitrate !== bitrateStr) {
-                setToastMessage(`Auto-detected bitrate: ${bitrateStr}`)
-                return { ...prev, video_bitrate: bitrateStr }
-              }
-              return prev
-            })
-          }
-        }
-      } catch (e) {
-        // silently ignore probe errors during typing
-      }
-    }, 1000)
-    return () => clearTimeout(timer)
-  }, [tempVideoPath, isSettingsOpen])
-
-  useEffect(() => {
     const handleGlobalKeyDown = async (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        if (isBrowserOpen) {
+          setIsBrowserOpen(false)
+          return
+        }
         if (isHelpOpen) {
           setIsHelpOpen(false)
           return
@@ -354,25 +621,15 @@ export default function App() {
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') {
         e.preventDefault()
-        try {
-          const res = await fetch(`${API_BASE}/api/dialog/open`)
-          if (res.ok) {
-            const data = await res.json()
-            if (data.path) {
-              handleProbe(data.path)
-            }
-          }
-        } catch (err) {
-          console.error("Failed to open file dialog", err)
-        }
+        setIsBrowserOpen(true)
       }
-      if (isTyping) return
-      
+      if (isTyping || isBrowserOpen) return
+
       if (e.code === 'KeyS' && e.altKey) {
         e.preventDefault()
         openSettings()
       }
-      
+
       if (e.code === 'KeyQ' && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
         e.preventDefault()
         handleCloseVideo()
@@ -428,13 +685,12 @@ export default function App() {
       videoRef.current.src = '' // Explicitly set to empty string to forcefully abort pending browser requests
       videoRef.current.load()
     }
-    setVideoPath('')
-    setVideoInfo(null)
+    setSources({})
+    setSourceOrder([])
+    setActiveSourcePath('')
     setJobs([])
     setActiveJobId(null)
     setCurrentTime(0)
-    setKeyframes([])
-    setEstablishedMap({})
     setError(null)
   }
 
@@ -446,21 +702,27 @@ export default function App() {
     if (activeTab === 'yaml') return // Two-way binding separate paths
     const clean = (o: Record<string, unknown>) => {
        const r: Record<string, unknown> = { ...o }
-       Object.keys(r).forEach(k => { if (r[k] === '' || r[k] === undefined) delete r[k] })
+       Object.keys(r).forEach(k => {
+         const v = r[k]
+         if (v === '' || v === undefined || (Array.isArray(v) && v.length === 0)) delete r[k]
+       })
        return r
     }
     const flowObj = {
-      setting: clean({ 
+      setting: clean({
         video_codec: globalSetting.video_codec,
         video_bitrate: globalSetting.video_bitrate,
         audio_codec: globalSetting.audio_codec,
+        audio_bitrate: globalSetting.audio_bitrate,
         overwrite: globalSetting.overwrite,
         keep_temp: globalSetting.keep_temp,
         skip_existing: globalSetting.skip_existing,
         deinterlace: globalSetting.deinterlace,
         crop: globalSetting.crop,
-        input_path: videoPath 
+        fps: globalSetting.fps,
       }),
+      // Every job carries its own input_path (Media Pool source) instead of
+      // relying on a single flow-level input_path, so jobs can target different files.
       jobs: jobs.map(j => {
         const jobSetting = { ...j.setting }
         // Only apply global output_dir to merge jobs if not overridden
@@ -472,7 +734,7 @@ export default function App() {
     }
     const newYaml = yaml.dump(flowObj, { indent: 2, skipInvalid: true, noRefs: true })
     setYamlText(newYaml)
-  }, [globalSetting, jobs, videoPath, activeTab])
+  }, [globalSetting, jobs, activeTab])
 
   const handleYamlChange = (v: string) => {
     setYamlText(v)
@@ -483,13 +745,9 @@ export default function App() {
         const dObj = d as Record<string, unknown>
         const setting = dObj.setting as Record<string, unknown> | undefined
         if (setting) {
-          if (typeof setting.input_path === 'string') {
-            const newPath = setting.input_path
-            if (newPath !== videoPath) {
-              handleProbe(newPath, true)
-            }
-            setVideoPath(newPath)
-            setTempVideoPath(newPath)
+          // Back-compat: a top-level setting.input_path is treated as a source to load into the pool
+          if (typeof setting.input_path === 'string' && setting.input_path) {
+            addSource(setting.input_path)
           }
           const rest = { ...setting }
           delete rest.input_path
@@ -497,14 +755,24 @@ export default function App() {
         }
         const jobsList = dObj.jobs
         if (Array.isArray(jobsList)) {
-          setJobs(jobsList.map((j: unknown) => {
+          const newJobs = jobsList.map((j: unknown) => {
             const jobObj = j as Record<string, unknown>
-            return { 
-              id: (jobObj.id as string) || generateId(), 
-              ...jobObj, 
-              setting: (jobObj.setting as JobSetting) || {} 
+            return {
+              id: (jobObj.id as string) || generateId(),
+              ...jobObj,
+              setting: (jobObj.setting as JobSetting) || {}
             } as Job
-          }))
+          })
+          setJobs(newJobs)
+
+          // Make sure every source file referenced by a job is loaded into the Media Pool
+          const referenced = new Set<string>()
+          newJobs.forEach(j => {
+            if (j.setting.input_path) referenced.add(j.setting.input_path)
+            j.setting.merge_paths?.forEach(p => referenced.add(p))
+          })
+          const missing = Array.from(referenced).filter(p => !sourcesRef.current[p])
+          if (missing.length) addSources(missing)
         }
       }
     } catch {
@@ -512,32 +780,34 @@ export default function App() {
     } finally { isSyncingFromYaml.current = false }
   }
 
-  // establishedMap stores confirmed neighbors: { [time]: { prev: number, next: number } }
-  const [establishedMap, setEstablishedMap] = useState<Record<string, { prev?: number, next?: number }>>({})
-
   const stepKeyframe = async (dir: 'prev' | 'next') => {
+    const path = activeSourcePath
+    if (!path) return
+
     // 1. Check ESTABLISHED RELATIONSHIPS first (Zero Latency)
     // Increase tolerance to 0.01s for browser floating point jitter
-    const currentKey = currentTime.toFixed(2) 
+    const currentKey = currentTime.toFixed(2)
     const established = establishedMap[currentKey]
     const fastTarget = dir === 'prev' ? established?.prev : established?.next
 
     if (fastTarget !== undefined) {
       seekTo(fastTarget)
-      return 
+      return
     }
 
     // 2. New Territory - Perform network probe
     setIsSubmitting(true)
     try {
       const probeTime = Math.max(0, currentTime)
-      const res = await fetch(`${API_BASE}/api/keyframes?path=${encodeURIComponent(videoPath)}&time=${probeTime}&range_sec=10`)
+      const res = await fetch(`${API_BASE}/api/keyframes?path=${encodeURIComponent(path)}&time=${probeTime}&range_sec=10`)
       const data = await res.json()
       const newPoints: number[] = Array.from(new Set<number>(data.keyframes || [])).sort((a,b)=>a-b)
-      
-      // 3. Establish relationships between all returned points
-      setEstablishedMap(prev => {
-        const nextMap = { ...prev }
+
+      // 3. Establish relationships between all returned points, scoped to this source
+      setSources(prev => {
+        const src = prev[path]
+        if (!src) return prev
+        const nextMap = { ...src.establishedMap }
         for (let i = 0; i < newPoints.length; i++) {
           const k = newPoints[i].toFixed(2)
           const node = nextMap[k] || {}
@@ -545,24 +815,15 @@ export default function App() {
           if (i < newPoints.length - 1) node.next = newPoints[i+1]
           nextMap[k] = node
         }
-        return nextMap
+        return { ...prev, [path]: { ...src, establishedMap: nextMap } }
       })
 
       // 4. Find target in the results with a bit of buffer
       let target: number | undefined
       if (dir === 'prev') {
-        target = [...newPoints].reverse().find(x => x < currentTime - 0.05)
+        target = [...newPoints].reverse().find(x => x < currentTime - 0.05) ?? (currentTime > 0 ? 0 : undefined)
       } else {
         target = newPoints.find(x => x > currentTime + 0.05)
-      }
-
-      // Final fallback to global rough list
-      if (target === undefined) {
-        if (dir === 'prev') {
-          target = keyframes.slice().reverse().find(x => x < currentTime - 0.1) ?? (currentTime > 0 ? 0 : undefined)
-        } else {
-          target = keyframes.find(x => x > currentTime + 0.1)
-        }
       }
 
       if (target !== undefined) seekTo(target)
@@ -574,16 +835,17 @@ export default function App() {
   }
 
   const addJob = (type: 'split' | 'merge' | 'crop') => {
+    if (type !== 'merge' && !activeSourcePath) return
     const id = generateId()
-    const newJob: Job = { 
-      id, 
-      name: `${type.toUpperCase()} #${jobs.length + 1}`, 
-      command: type, 
-      setting: type === 'split' 
-        ? { start: formatTime(currentTime), end: formatTime(videoInfo?.duration_sec || 0) } 
+    const newJob: Job = {
+      id,
+      name: `${type.toUpperCase()} #${jobs.length + 1}`,
+      command: type,
+      setting: type === 'split'
+        ? { input_path: activeSourcePath, start: formatTime(currentTime), end: formatTime(videoInfo?.duration_sec || 0) }
         : type === 'crop'
-        ? { video_codec: 'libx264', video_bitrate: '5M' }
-        : { video_codec: 'copy' } 
+        ? { input_path: activeSourcePath, video_codec: 'libx264', video_bitrate: '5M' }
+        : { video_codec: 'copy', merge_paths: [] }
     }
     setJobs([...jobs, newJob]); setActiveJobId(id)
   }
@@ -680,7 +942,7 @@ export default function App() {
            <div className="h-6 w-[1px] bg-white/10" />
            <div className="flex items-center gap-4">
              <button onClick={openSettings} className="flex items-center gap-2 text-gray-500 hover:text-cyan-500 transition-colors uppercase font-black text-[9px] tracking-widest"><Settings2 size={14}/> Flow Settings</button>
-             <button onClick={handleCloseVideo} disabled={!videoPath} className="flex items-center gap-2 text-gray-500 hover:text-red-500 disabled:opacity-20 transition-colors uppercase font-black text-[9px] tracking-widest border-l border-white/5 pl-4"><X size={14}/> Close Video</button>
+             <button onClick={handleCloseVideo} disabled={!sourceOrder.length} className="flex items-center gap-2 text-gray-500 hover:text-red-500 disabled:opacity-20 transition-colors uppercase font-black text-[9px] tracking-widest border-l border-white/5 pl-4"><X size={14}/> Close All Sources</button>
              <div className="flex items-center gap-3 px-4 py-1.5 bg-white/[0.02] border border-white/[0.05] rounded-full">
                <div className="flex items-center gap-2 border-r border-white/5 pr-3">
                  <span className="text-[10px] font-black text-gray-600 uppercase tracking-tighter">Video</span>
@@ -700,28 +962,50 @@ export default function App() {
       <div className="flex-1 flex overflow-hidden w-full">
         <div className="flex-1 flex flex-col p-4 gap-4 overflow-hidden bg-black/20">
            {error && (
-             <div className="bg-red-500/10 border border-red-500/20 text-red-500 px-6 py-4 rounded-2xl flex items-center justify-between animate-in slide-in-from-top duration-300">
-               <div className="flex items-center gap-3">
-                 <AlertCircle size={18} />
-                 <span className="text-xs font-black uppercase tracking-widest">{error}</span>
+             <div className="bg-red-500/10 border border-red-500/20 text-red-500 px-6 py-4 rounded-2xl flex flex-col gap-3 animate-in slide-in-from-top duration-300">
+               <div className="flex items-center justify-between">
+                 <div className="flex items-center gap-3">
+                   <AlertCircle size={18} />
+                   <span className="text-xs font-black uppercase tracking-widest">Flow Failed</span>
+                 </div>
+                 <button onClick={() => setError(null)} className="p-1 hover:bg-white/5 rounded-lg transition-colors"><X size={16}/></button>
                </div>
-               <button onClick={() => setError(null)} className="p-1 hover:bg-white/5 rounded-lg transition-colors"><X size={16}/></button>
+               <pre className="text-[11px] font-mono normal-case whitespace-pre-wrap break-words max-h-64 overflow-y-auto bg-black/30 rounded-xl p-4">{error}</pre>
              </div>
            )}
+           <div className="flex items-center gap-2 overflow-x-auto shrink-0 custom-scrollbar">
+              <button onClick={() => setIsBrowserOpen(true)} className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-dashed border-white/10 text-gray-500 hover:border-cyan-500/40 hover:text-cyan-400 text-[10px] font-black uppercase tracking-widest transition-colors"><Plus size={12}/> Add Source</button>
+              {sourceList.map(s => (
+                <div
+                  key={s.path}
+                  onClick={() => setActiveSourcePath(s.path)}
+                  title={s.path}
+                  className={cn(
+                    "shrink-0 flex items-center gap-2 pl-3 pr-2 py-1.5 rounded-full border text-[10px] font-bold cursor-pointer transition-colors",
+                    s.path === activeSourcePath ? "bg-cyan-500/10 border-cyan-500/40 text-cyan-400" : "bg-white/[0.02] border-white/[0.05] text-gray-500 hover:border-white/20"
+                  )}
+                >
+                  <Film size={12} className="shrink-0" />
+                  <span className="max-w-[160px] truncate normal-case">{basename(s.path)}</span>
+                  <button onClick={e => { e.stopPropagation(); removeSource(s.path) }} className="p-0.5 hover:text-red-500 transition-colors shrink-0"><X size={10}/></button>
+                </div>
+              ))}
+           </div>
            <div className="flex-1 bg-black rounded-3xl overflow-hidden border border-white/[0.03] shadow-2xl relative group">
-              {videoInfo ? <video ref={videoRef} src={`${API_BASE}/api/stream?path=${encodeURIComponent(videoPath)}`} className="w-full h-full object-contain" 
+              {videoInfo ? <video ref={videoRef} src={`${API_BASE}/api/stream?path=${encodeURIComponent(activeSourcePath)}`} className="w-full h-full object-contain"
                 onTimeUpdate={()=>{
                   if(videoRef.current && !videoRef.current.seeking) {
                     const t = videoRef.current.currentTime
                     setCurrentTime(t)
                     if (!isTyping) setEditTime(formatTime(t))
                   }
-                }} 
+                }}
                 onError={() => {
+                  const brokenPath = activeSourcePath
                   setError("Video resource unavailable (File may have been deleted or moved)");
-                  setVideoInfo(null);
-                  setKeyframes([]);
-                  setEstablishedMap({});
+                  setSources(prev => { const next = { ...prev }; delete next[brokenPath]; return next })
+                  setSourceOrder(prev => prev.filter(p => p !== brokenPath))
+                  setActiveSourcePath('')
                 }}
                 controls /> : <div className="w-full h-full flex flex-col items-center justify-center opacity-[0.03]"><Film size={180} /></div>}
               
@@ -808,9 +1092,7 @@ export default function App() {
                  <button onClick={() => stepKeyframe('next')} disabled={isSubmitting} className="p-4 hover:bg-white/5 rounded-xl text-cyan-500 disabled:opacity-20 transition-colors shrink-0"><ChevronRight size={32}/></button>
               </div>
               
-              <div className="flex gap-[1px] opacity-10 px-1 pt-4">
-                 {videoInfo && keyframes.length < 2000 && keyframes.map(k => (<div key={k} className="h-1 bg-cyan-500 rounded-full flex-1" />))}
-                 </div>
+              <div className="flex gap-[1px] opacity-10 px-1 pt-4"></div>
                  </div>
                  </div>
 
@@ -829,8 +1111,11 @@ export default function App() {
                          const isActive = activeJobId === j.id
                          return (
                           <div key={j.id} className="space-y-3">
-                            <div 
-                              onClick={()=>setActiveJobId(prev => prev === j.id ? null : j.id)} 
+                            <div
+                              onClick={()=>{
+                                setActiveJobId(prev => prev === j.id ? null : j.id)
+                                if (j.setting.input_path && j.setting.input_path !== activeSourcePath) setActiveSourcePath(j.setting.input_path)
+                              }}
                               draggable
                               onDragStart={() => handleDragStart(i)}
                               onDragEnter={() => handleDragEnter(i)}
@@ -845,7 +1130,7 @@ export default function App() {
                                <div className="text-gray-700 cursor-grab active:cursor-grabbing hover:text-cyan-500 transition-colors">
                                  <GripVertical size={16} />
                                </div>
-                               <div className="flex-1 flex justify-between items-center relative z-10"><div className="flex items-center gap-4">{isD ? <CheckCircle2 size={14} className="text-green-500"/> : isR ? <Loader2 size={14} className="text-cyan-500 animate-spin"/> : <div className={cn("w-6 h-6 flex items-center justify-center rounded-md font-black text-[9px] shadow-2xl", j.command==='split'?"bg-cyan-950 text-cyan-400":j.command==='crop'?"bg-amber-950 text-amber-400":"bg-indigo-950 text-indigo-400")}>{i+1}</div>}<span className="text-xs font-black text-white uppercase tracking-tighter">{j.name}</span></div><button onClick={e=>{e.stopPropagation();setJobs(jobs.filter(x=>x.id!==j.id))}} className="opacity-0 group-hover:opacity-100 text-gray-700 hover:text-red-500 transition-opacity p-1"><X size={16}/></button></div>
+                               <div className="flex-1 flex justify-between items-center relative z-10"><div className="flex items-center gap-4 min-w-0">{isD ? <CheckCircle2 size={14} className="text-green-500 shrink-0"/> : isR ? <Loader2 size={14} className="text-cyan-500 animate-spin shrink-0"/> : <div className={cn("w-6 h-6 flex items-center justify-center rounded-md font-black text-[9px] shadow-2xl shrink-0", j.command==='split'?"bg-cyan-950 text-cyan-400":j.command==='crop'?"bg-amber-950 text-amber-400":"bg-indigo-950 text-indigo-400")}>{i+1}</div>}<div className="flex flex-col min-w-0 gap-0.5"><span className="text-xs font-black text-white uppercase tracking-tighter truncate">{j.name}</span><span className="text-[9px] font-bold text-gray-600 normal-case truncate">{j.command === 'merge' ? (j.setting.merge_paths?.length ? `${j.setting.merge_paths.length} sources` : 'auto-chain') : (j.setting.input_path ? basename(j.setting.input_path) : 'no source')}</span></div></div><button onClick={e=>{e.stopPropagation();setJobs(jobs.filter(x=>x.id!==j.id))}} className="opacity-0 group-hover:opacity-100 text-gray-700 hover:text-red-500 transition-opacity p-1 shrink-0"><X size={16}/></button></div>
                                {isR && <div className="absolute bottom-0 left-0 h-[2px] bg-cyan-500 transition-all duration-300" style={{ width: `${Math.round((st.completed / st.total) * 100)}%` }} />}
                             </div>
 
@@ -855,6 +1140,48 @@ export default function App() {
                                 <div className="space-y-5 text-[9px] uppercase font-black text-gray-500 tracking-wider">
                                     <div className="space-y-2"><label>Task Label</label><input className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2 text-xs text-white outline-none focus:border-cyan-500/30 font-normal transition-colors" value={activeJob.name} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,name:e.target.value}:x))} /></div>
                                     {(activeJob.command==='split' || activeJob.command==='crop') && (
+                                      <div className="space-y-2">
+                                        <label>Source File</label>
+                                        <select
+                                          className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2 text-xs text-white outline-none font-bold appearance-none cursor-pointer"
+                                          value={activeJob.setting.input_path || ''}
+                                          onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,input_path:e.target.value||undefined}}:x))}
+                                        >
+                                          {!activeJob.setting.input_path && <option value="">Select a source...</option>}
+                                          {sourceList.map(s => <option key={s.path} value={s.path}>{basename(s.path)}</option>)}
+                                        </select>
+                                      </div>
+                                    )}
+                                    {activeJob.command==='merge' && (
+                                      <div className="space-y-2 border-t border-white/[0.03] pt-5">
+                                        <label>Sources To Merge</label>
+                                        {sourceList.length === 0 ? (
+                                          <p className="text-[10px] text-gray-700 italic normal-case">No sources in the Media Pool yet.</p>
+                                        ) : (
+                                          <div className="space-y-1.5">
+                                            {sourceList.map(s => {
+                                              const checked = activeJob.setting.merge_paths?.includes(s.path) || false
+                                              return (
+                                                <label key={s.path} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-white/[0.05] bg-black cursor-pointer">
+                                                  <input
+                                                    type="checkbox"
+                                                    checked={checked}
+                                                    onChange={e => {
+                                                      const cur = activeJob.setting.merge_paths || []
+                                                      const next = e.target.checked ? [...cur, s.path] : cur.filter(p => p !== s.path)
+                                                      setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,merge_paths:next}}:x))
+                                                    }}
+                                                  />
+                                                  <span className="text-[11px] text-gray-300 font-normal normal-case truncate">{basename(s.path)}</span>
+                                                </label>
+                                              )
+                                            })}
+                                          </div>
+                                        )}
+                                        <p className="text-[9px] text-gray-700 italic normal-case">Leave empty to auto-chain the outputs of earlier Split/Crop jobs in this flow.</p>
+                                      </div>
+                                    )}
+                                    {(activeJob.command==='split' || activeJob.command==='crop') && (
                                       <div className="grid grid-cols-2 gap-4 border-t border-white/[0.03] pt-5">
                                           <div className="space-y-2"><label className="text-cyan-600">In Point</label><div className="flex gap-1.5"><input className="flex-1 bg-black border border-white/[0.05] rounded-lg px-3 py-1.5 text-[11px] font-mono text-cyan-400 outline-none focus:border-cyan-500/30" value={activeJob.setting.start || ''} onChange={e => setJobs(prev => prev.map(x => x.id === activeJob.id ? {...x, setting: {...x.setting, start: e.target.value}} : x))}/><button onClick={()=>seekTo(parseTimeToSeconds(activeJob.setting.start))} className="p-1.5 bg-white/[0.03] rounded-lg hover:bg-white/[0.08] text-cyan-500 transition-colors"><LocateFixed size={12}/></button><button onClick={()=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,start:formatTime(currentTime)}}:x))} className="p-1.5 bg-white/[0.03] rounded-lg hover:bg-white/[0.08] text-white/50"><Clock size={12}/></button></div></div>
                                           <div className="space-y-2"><label className="text-red-600">Out Point</label><div className="flex gap-1.5"><input className="flex-1 bg-black border border-white/[0.05] rounded-lg px-3 py-1.5 text-[11px] font-mono text-red-400 outline-none focus:border-red-500/30" value={activeJob.setting.end || ''} onChange={e => setJobs(prev => prev.map(x => x.id === activeJob.id ? {...x, setting: {...x.setting, end: e.target.value}} : x))}/><button onClick={()=>seekTo(parseTimeToSeconds(activeJob.setting.end))} className="p-1.5 bg-white/[0.03] rounded-lg hover:bg-white/[0.08] text-red-500 transition-colors"><LocateFixed size={12}/></button><button onClick={()=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,end:formatTime(currentTime)}}:x))} className="p-1.5 bg-white/[0.03] rounded-lg hover:bg-white/[0.08] text-white/50"><Clock size={12}/></button></div></div>
@@ -863,7 +1190,15 @@ export default function App() {
 
                                     <div className="grid grid-cols-2 gap-4 border-t border-white/[0.03] pt-5">
                                       <div className="space-y-2"><label>Video Codec</label><select className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2 text-xs text-white outline-none font-bold appearance-none cursor-pointer" value={activeJob.setting.video_codec||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,video_codec:e.target.value||undefined}}:x))}><option value="">Inherit</option><option value="copy">COPY</option><option value="libx264">H.264</option><option value="h264_nvenc">NVENC</option></select></div>
-                                      <div className="space-y-2"><label>Target Bitrate</label><input className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2 text-xs text-white outline-none font-mono font-normal" placeholder="e.g. 12M" value={activeJob.setting.video_bitrate||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,video_bitrate:e.target.value||undefined}}:x))} /></div>
+                                      <div className="space-y-2"><label>Target Bitrate {bitrateHintFor(activeJob.setting.input_path) && <span className="text-gray-600 normal-case">(source: {bitrateHintFor(activeJob.setting.input_path)})</span>}</label><input className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2 text-xs text-white outline-none font-mono font-normal" placeholder={bitrateHintFor(activeJob.setting.input_path) || 'e.g. 12M'} value={activeJob.setting.video_bitrate||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,video_bitrate:e.target.value||undefined}}:x))} /></div>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                      <div className="space-y-2"><label>Audio Codec</label><select className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2 text-xs text-white outline-none font-bold appearance-none cursor-pointer" value={activeJob.setting.audio_codec||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,audio_codec:e.target.value||undefined}}:x))}><option value="">Inherit</option><option value="copy">COPY</option><option value="aac">AAC</option></select></div>
+                                      <div className="space-y-2"><label>Audio Bitrate {audioBitrateHintFor(activeJob.setting.input_path) && <span className="text-gray-600 normal-case">(source: {audioBitrateHintFor(activeJob.setting.input_path)})</span>}</label><input className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2 text-xs text-white outline-none font-mono font-normal" placeholder={audioBitrateHintFor(activeJob.setting.input_path) || 'e.g. 192k'} value={activeJob.setting.audio_bitrate||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,audio_bitrate:e.target.value||undefined}}:x))} /></div>
+                                    </div>
+                                    <div className="space-y-2">
+                                      <label>Frame Rate {fpsHintFor(activeJob.setting.input_path) && <span className="text-gray-600 normal-case">(source: {fpsHintFor(activeJob.setting.input_path)})</span>}</label>
+                                      <input className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2 text-xs text-white outline-none font-mono font-normal" placeholder={fpsHintFor(activeJob.setting.input_path) || 'e.g. 60000/1001 or 30'} value={activeJob.setting.fps||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,fps:e.target.value||undefined}}:x))} />
                                     </div>
                                     <div className="space-y-2 border-t border-white/[0.03] pt-5">
                                       <div className="flex justify-between items-center mb-1">
@@ -919,11 +1254,11 @@ export default function App() {
 
                        <div className="relative group">
                           <div className="p-4 rounded-2xl border-2 border-dashed border-white/[0.03] bg-white/[0.01] flex items-center justify-center gap-3 text-[13px] font-black text-gray-600 uppercase tracking-widest group-hover:border-cyan-500/30 group-hover:bg-cyan-500/[0.02] group-hover:text-cyan-500 transition-all">
-                             <Plus size={18} /> New Job
+                             <Plus size={18} /> New Job {activeSourcePath && <span className="text-[9px] normal-case font-bold text-gray-700">for {basename(activeSourcePath)}</span>}
                           </div>
                           <div className="absolute inset-0 flex opacity-0 group-hover:opacity-100 transition-all z-10 overflow-hidden rounded-2xl">
-                             <button onClick={() => addJob('split')} className="flex-1 bg-cyan-600 hover:bg-cyan-500 text-white font-black text-[13px] flex items-center justify-center gap-2 uppercase tracking-tight">✂️ Split</button>
-                             <button onClick={() => addJob('crop')} className="flex-1 bg-amber-600 hover:bg-amber-500 text-white font-black text-[13px] flex items-center justify-center gap-2 uppercase tracking-tight">🖼️ Crop</button>
+                             <button onClick={() => addJob('split')} disabled={!activeSourcePath} title={!activeSourcePath ? 'Select a source in the Media Pool first' : ''} className="flex-1 bg-cyan-600 hover:bg-cyan-500 disabled:bg-gray-800 disabled:cursor-not-allowed text-white font-black text-[13px] flex items-center justify-center gap-2 uppercase tracking-tight">✂️ Split</button>
+                             <button onClick={() => addJob('crop')} disabled={!activeSourcePath} title={!activeSourcePath ? 'Select a source in the Media Pool first' : ''} className="flex-1 bg-amber-600 hover:bg-amber-500 disabled:bg-gray-800 disabled:cursor-not-allowed text-white font-black text-[13px] flex items-center justify-center gap-2 uppercase tracking-tight">🖼️ Crop</button>
                              <button onClick={() => addJob('merge')} className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-black text-[13px] flex items-center justify-center gap-2 uppercase tracking-tight">🔗 Merge</button>
                           </div>
                        </div>
@@ -1007,18 +1342,33 @@ export default function App() {
             <div className="grid grid-cols-2 gap-10">
               <div className="space-y-6">
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Input Video Path</label>
-                  <div className="flex gap-3">
-                    <input 
-                      ref={settingsInputRef}
-                      className="flex-1 bg-black border border-white/[0.05] rounded-2xl px-5 py-4 text-xs text-white outline-none focus:border-cyan-500/30 font-mono transition-colors" 
-                      placeholder="e.g. /path/to/video.mp4" 
-                      value={tempVideoPath} 
-                      onChange={e => setTempVideoPath(normalizePath(e.target.value))} 
-                    />
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Media Pool</label>
+                  <div className="space-y-1.5 max-h-40 overflow-y-auto custom-scrollbar pr-1">
+                    {sourceList.length === 0 && <p className="text-[10px] text-gray-700 italic py-2">No sources loaded yet.</p>}
+                    {sourceList.map(s => {
+                      const inUse = jobs.some(j => j.setting.input_path === s.path || j.setting.merge_paths?.includes(s.path))
+                      const isActive = s.path === activeSourcePath
+                      return (
+                        <div key={s.path} className={cn("flex items-center gap-2 px-3 py-2 rounded-xl border text-xs transition-colors", isActive ? "bg-cyan-500/10 border-cyan-500/30" : "bg-black border-white/[0.05]")}>
+                          <button onClick={() => setActiveSourcePath(s.path)} title={s.path} className={cn("flex-1 text-left truncate font-mono", isActive ? "text-cyan-400" : "text-gray-400 hover:text-white")}>{basename(s.path)}</button>
+                          <button onClick={() => removeSource(s.path)} disabled={inUse} title={inUse ? "In use by a job" : "Remove from pool"} className="p-1 text-gray-600 hover:text-red-500 disabled:opacity-20 disabled:hover:text-gray-600 transition-colors shrink-0"><X size={12}/></button>
+                        </div>
+                      )
+                    })}
                   </div>
-
-                  <p className="text-[9px] text-gray-700 italic">Changing this path will reset all current jobs and timeline progress.</p>
+                  <div className="flex gap-2 pt-1">
+                    <input
+                      ref={settingsInputRef}
+                      className="flex-1 bg-black border border-white/[0.05] rounded-2xl px-5 py-3 text-xs text-white outline-none focus:border-cyan-500/30 font-mono transition-colors"
+                      placeholder="e.g. /path/to/video.mp4"
+                      value={newSourcePath}
+                      onChange={e => setNewSourcePath(normalizePath(e.target.value))}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.stopPropagation(); if (newSourcePath) { addSource(newSourcePath); setNewSourcePath('') } } }}
+                    />
+                    <button onClick={() => { if (newSourcePath) { addSource(newSourcePath); setNewSourcePath('') } }} className="px-4 rounded-2xl bg-white/[0.05] hover:bg-white/[0.1] text-white text-[10px] font-black uppercase tracking-widest transition-colors">Add</button>
+                    <button onClick={() => setIsBrowserOpen(true)} className="px-4 rounded-2xl bg-white/[0.05] hover:bg-white/[0.1] text-white text-[10px] font-black uppercase tracking-widest transition-colors">Browse</button>
+                  </div>
+                  <p className="text-[9px] text-gray-700 italic">Each job binds to one source, so different jobs can edit different files in the same flow.</p>
                 </div>
 
                 <div className="space-y-2">
@@ -1048,14 +1398,47 @@ export default function App() {
                     </select>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Global Bitrate</label>
-                    <input 
+                    <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Global Bitrate {bitrateHintFor(activeSourcePath) && <span className="normal-case text-gray-600">(active source: {bitrateHintFor(activeSourcePath)})</span>}</label>
+                    <input
                       className="w-full bg-black border border-white/[0.05] rounded-2xl px-4 py-3.5 text-xs text-white outline-none font-mono focus:border-cyan-500/30"
-                      placeholder="e.g. 8M"
+                      placeholder={bitrateHintFor(activeSourcePath) || 'e.g. 8M'}
                       value={globalSetting.video_bitrate || ''}
                       onChange={e => setGlobalSetting({...globalSetting, video_bitrate: e.target.value})}
                     />
                   </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Global Audio Codec</label>
+                    <select
+                      className="w-full bg-black border border-white/[0.05] rounded-2xl px-4 py-3.5 text-xs text-white outline-none font-bold appearance-none cursor-pointer focus:border-cyan-500/30"
+                      value={globalSetting.audio_codec}
+                      onChange={e => setGlobalSetting({...globalSetting, audio_codec: e.target.value})}
+                    >
+                      <option value="copy">COPY</option>
+                      <option value="aac">AAC</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Global Audio Bitrate {audioBitrateHintFor(activeSourcePath) && <span className="normal-case text-gray-600">(active source: {audioBitrateHintFor(activeSourcePath)})</span>}</label>
+                    <input
+                      className="w-full bg-black border border-white/[0.05] rounded-2xl px-4 py-3.5 text-xs text-white outline-none font-mono focus:border-cyan-500/30"
+                      placeholder={audioBitrateHintFor(activeSourcePath) || 'e.g. 192k'}
+                      value={globalSetting.audio_bitrate || ''}
+                      onChange={e => setGlobalSetting({...globalSetting, audio_bitrate: e.target.value})}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Global Frame Rate {fpsHintFor(activeSourcePath) && <span className="normal-case text-gray-600">(active source: {fpsHintFor(activeSourcePath)})</span>}</label>
+                  <input
+                    className="w-full bg-black border border-white/[0.05] rounded-2xl px-5 py-4 text-xs text-cyan-400 outline-none focus:border-cyan-500/30 font-mono transition-colors"
+                    placeholder={fpsHintFor(activeSourcePath) || 'e.g. 60000/1001 or 30'}
+                    value={globalSetting.fps || ''}
+                    onChange={e => setGlobalSetting({...globalSetting, fps: e.target.value})}
+                  />
                 </div>
 
                 <div className="space-y-2">
@@ -1171,6 +1554,15 @@ export default function App() {
           <CheckCircle2 size={16} className="text-cyan-400" />
           <span className="text-xs font-bold tracking-wide">{toastMessage}</span>
         </div>
+      )}
+      {isBrowserOpen && (
+        <FileBrowserModal
+          onClose={() => setIsBrowserOpen(false)}
+          onConfirm={async (paths) => {
+            setIsBrowserOpen(false)
+            if (paths.length) await addSources(paths)
+          }}
+        />
       )}
 
     </div>

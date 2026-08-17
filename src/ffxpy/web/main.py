@@ -1,5 +1,7 @@
 import asyncio
 import json
+import os
+import sys
 import tempfile
 import uuid
 from datetime import timedelta
@@ -43,7 +45,6 @@ shutdown_signal: asyncio.Event = None
 async def startup_event():
     global shutdown_signal
     shutdown_signal = asyncio.Event()
-    import sys
 
     if sys.platform == 'win32':
         # Silence the annoying ConnectionResetError when scrubbing video on Windows
@@ -161,38 +162,116 @@ async def close_video():
     return {'status': 'closed'}
 
 
-@app.get('/api/dialog/open')
-async def open_file_dialog():
-    import tkinter as tk
-    from tkinter import filedialog
+VIDEO_EXTENSIONS = {
+    '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.ts', '.m2ts',
+}
 
-    def _open():
-        try:
-            root = tk.Tk()
-            root.attributes('-topmost', True)
-            root.withdraw()
-            file_path = filedialog.askopenfilename(
-                title='Select Video File',
-                filetypes=[
-                    (
-                        'Video files',
-                        '*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm *.ts *.m2ts',
-                    ),
-                    ('All files', '*.*'),
-                ],
-            )
-            root.destroy()
-            return file_path
-        except Exception:
-            return None
 
-    loop = asyncio.get_event_loop()
-    path = await loop.run_in_executor(None, _open)
+def _json_safe(s: str) -> str:
+    """Make a filesystem name safe to serialize as JSON.
 
-    if not path:
-        return {'path': None}
+    Some mounts (WSL drvfs against network/removable drives, filenames
+    written under a non-UTF-8 locale, etc.) can surface names that Python
+    decodes via surrogateescape -- valid as a `str` but not valid UTF-8. Left
+    alone, serializing that into the JSON response raises an uncaught
+    UnicodeEncodeError, which previously 500'd the *entire* directory listing
+    (every other, perfectly normal file in the folder included) instead of
+    just the one bad entry.
+    """
+    try:
+        s.encode('utf-8')
+        return s
+    except UnicodeEncodeError:
+        return s.encode('utf-8', 'surrogateescape').decode('utf-8', 'replace')
 
-    return {'path': str(Path(path).resolve().as_posix())}
+
+@app.get('/api/browse')
+async def browse_directory(path: str | None = None):
+    """List a directory's subfolders and video files as JSON.
+
+    This backs an in-page file browser instead of a native OS file picker.
+    Browsers never expose a real filesystem path from <input type="file">, and
+    ffxpy needs one to hand off to ffmpeg, so the frontend renders its own
+    folder navigator against this endpoint -- no GUI toolkit involved on the
+    backend at all, which sidesteps a Tk/X11 dialog crash we used to hit here.
+    """
+    target = Path(path).expanduser() if path else Path.home()
+    try:
+        target = target.resolve()
+    except (OSError, RuntimeError):
+        raise HTTPException(status_code=400, detail='Invalid path') from None
+
+    if not target.exists():
+        raise HTTPException(status_code=404, detail='Directory not found')
+    if not target.is_dir():
+        raise HTTPException(status_code=400, detail='Not a directory')
+
+    dirs: list[Path] = []
+    files: list[Path] = []
+    io_warning: str | None = None
+    try:
+        # os.scandir() directly, not Path.iterdir() (which wraps it): on this
+        # WSL drvfs mount, iterdir()'s extra layer changes the read buffering
+        # enough that it hits the directory's hard EIO on the very first entry,
+        # while scandir() reliably gets hundreds of real entries first -- same
+        # underlying syscall, but scandir salvages far more before the error.
+        with os.scandir(target) as it:
+            for entry in it:
+                try:
+                    p = Path(entry.path)
+                    if entry.is_dir():
+                        dirs.append(p)
+                    elif p.suffix.lower() in VIDEO_EXTENSIONS:
+                        files.append(p)
+                except OSError:
+                    continue
+    except PermissionError:
+        raise HTTPException(status_code=403, detail='Permission denied') from None
+    except OSError as e:
+        # Mounts that go through a network/protocol bridge (WSL drvfs to a
+        # Windows drive, an SMB share, ...) can hit a hard EIO partway through
+        # listing a very large directory. This is reproducibly deterministic
+        # for some directories (same entry count fails every time), not a
+        # transient blip -- so retrying the whole read is pointless. Instead,
+        # keep whatever entries were read before the error, same as `ls` does,
+        # so the folder is still at least partially browsable.
+        if not dirs and not files:
+            raise HTTPException(
+                status_code=500, detail=f'Failed to read directory: {e}'
+            ) from None
+        io_warning = (
+            f'Directory listing may be incomplete after {len(dirs) + len(files)} '
+            f'entries: {e}'
+        )
+
+    def to_entry(p: Path, is_dir: bool) -> Dict[str, Any]:
+        size = None
+        if not is_dir:
+            try:
+                size = p.stat().st_size
+            except OSError:
+                pass
+        return {
+            'name': _json_safe(p.name),
+            'path': _json_safe(p.as_posix()),
+            'is_dir': is_dir,
+            'size': size,
+        }
+
+    try:
+        entries = [to_entry(p, True) for p in sorted(dirs, key=lambda p: p.name.lower())]
+        entries += [to_entry(p, False) for p in sorted(files, key=lambda p: p.name.lower())]
+        parent = target.parent.as_posix() if target.parent != target else None
+        result = {'path': _json_safe(target.as_posix()), 'parent': parent, 'entries': entries}
+        if io_warning:
+            result['warning'] = io_warning
+        return result
+    except Exception as e:
+        # Last-resort safety net: never let an unexpected error surface as a
+        # bare, non-JSON 500 -- the frontend can only show a real reason if
+        # there's a `detail` field to read.
+        console.print(f'[red]Unexpected error browsing "{target}":[/red] {e}')
+        raise HTTPException(status_code=500, detail=f'Unexpected error: {e}') from None
 
 
 @app.get('/api/keyframes')
