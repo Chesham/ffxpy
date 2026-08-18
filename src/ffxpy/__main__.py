@@ -997,13 +997,23 @@ def compile_commandline(
         final_filters.append(f'scale={setting.scale}')
     if setting.crop:
         final_filters.append(f'crop={setting.crop}')
-    if setting.fps:
+    if setting.fps and not is_copy:
         # ffmpeg's `fps` filter actually retimes by duplicating/dropping frames to
         # hit the target rate, unlike `-r` which just relabels timestamps -- needed
         # because concat-copying clips transcoded at different native frame rates
         # (e.g. one 29.97fps source mixed with 59.94fps sources) plays back with
         # stutter/lag on whichever segments don't match the container's assumed
         # rate, worst on the last (often longest) segment.
+        #
+        # Unlike video_bitrate/audio_bitrate (which ffmpeg silently ignores under
+        # `-c:v copy`), a `-vf` filter combined with stream copy is a hard ffmpeg
+        # error ("Filtering and streamcopy cannot be used together"). fps is the
+        # only filter field that gets auto-filled with a real probed value (not
+        # just a UI placeholder hint), so without this guard every copy-mode job
+        # would fail as soon as any source's fps got auto-detected. scale/crop
+        # stay ungated since those are never auto-filled -- a user who typed one
+        # in alongside video_codec=copy did so on purpose, and should see
+        # ffmpeg's own error rather than have it silently dropped.
         final_filters.append(f'fps={setting.fps}')
 
     if not is_copy and setting.start:
