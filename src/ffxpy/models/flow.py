@@ -144,6 +144,14 @@ def merge_normalize(setting: Setting, merge_paths: list[Path] | None = None):
                 working_dir.glob('*_split_*', case_sensitive=False)
             )
 
+    if not setting.working_dir and setting.merge_paths:
+        # A merge job built from per-job input_path (e.g. the web UI's Media
+        # Pool) has no working_dir of its own -- falling back to Path('.')
+        # here placed the merge list / output relative to whatever directory
+        # the process was launched from (e.g. a Windows install location
+        # without write access) instead of the clips being merged.
+        working_dir = setting.merge_paths[0].parent
+
     if not setting.input_path or setting.input_path.suffix.lower() != '.txt':
         setting.input_path = working_dir / 'ffxpy_merge_list.txt'
 
