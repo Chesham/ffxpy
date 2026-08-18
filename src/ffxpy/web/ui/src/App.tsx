@@ -845,7 +845,7 @@ export default function App() {
         ? { input_path: activeSourcePath, start: formatTime(currentTime), end: formatTime(videoInfo?.duration_sec || 0) }
         : type === 'crop'
         ? { input_path: activeSourcePath, video_codec: 'libx264', video_bitrate: '5M' }
-        : { video_codec: 'copy', merge_paths: [] }
+        : { merge_paths: [] }
     }
     setJobs([...jobs, newJob]); setActiveJobId(id)
   }
