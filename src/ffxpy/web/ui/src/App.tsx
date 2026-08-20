@@ -302,7 +302,13 @@ function FileBrowserModal({ onConfirm, onClose }: { onConfirm: (paths: string[])
   }
 
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'ArrowDown') {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      // Plain Enter is already used to navigate into a highlighted folder or
+      // toggle a file's selection, so use Ctrl/Cmd+Enter to submit -- lets the
+      // "Add N Source(s)" button fire without leaving the path input to click it.
+      e.preventDefault()
+      if (selected.size > 0) onConfirm(Array.from(selected))
+    } else if (e.key === 'ArrowDown') {
       e.preventDefault()
       setHighlight(h => Math.min(filteredEntries.length - 1, h + 1))
     } else if (e.key === 'ArrowUp') {
@@ -345,6 +351,7 @@ function FileBrowserModal({ onConfirm, onClose }: { onConfirm: (paths: string[])
         <div className="px-6 py-3 border-b border-white/[0.03] flex gap-2 items-center shrink-0">
           <button onClick={() => parent && load(parent)} disabled={!parent} title="Up one level" className="p-2 rounded-lg bg-white/[0.03] hover:bg-white/[0.08] disabled:opacity-20 disabled:cursor-not-allowed text-gray-400 transition-colors"><ChevronLeft size={16}/></button>
           <input
+            autoFocus
             className="flex-1 bg-black border border-white/[0.05] rounded-xl px-3 py-2 text-xs text-white font-mono outline-none focus:border-cyan-500/30"
             value={manualPath}
             onChange={e => setManualPath(normalizePath(e.target.value))}
