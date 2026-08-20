@@ -1529,6 +1529,12 @@ export default function App() {
                   <div className="flex justify-between items-center"><span className="text-xs font-bold text-gray-400">Prev Keyframe</span><kbd className="px-2.5 py-1 bg-white/[0.05] border border-white/[0.1] rounded text-[10px] font-mono text-gray-300 shadow-sm">[</kbd></div>
                   <div className="flex justify-between items-center"><span className="text-xs font-bold text-gray-400">Next Keyframe</span><kbd className="px-2.5 py-1 bg-white/[0.05] border border-white/[0.1] rounded text-[10px] font-mono text-gray-300 shadow-sm">]</kbd></div>
                 </div>
+                <h4 className="text-[10px] font-black text-cyan-600 uppercase tracking-[0.2em] pt-4">File Selector</h4>
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center"><span className="text-xs font-bold text-gray-400">Navigate List</span><kbd className="px-2.5 py-1 bg-white/[0.05] border border-white/[0.1] rounded text-[10px] font-mono text-gray-300 shadow-sm">↑ / ↓</kbd></div>
+                  <div className="flex justify-between items-center"><span className="text-xs font-bold text-gray-400">Open Folder / Toggle File</span><kbd className="px-2.5 py-1 bg-white/[0.05] border border-white/[0.1] rounded text-[10px] font-mono text-gray-300 shadow-sm">Enter</kbd></div>
+                  <div className="flex justify-between items-center"><span className="text-xs font-bold text-gray-400">Add Selected Sources</span><kbd className="px-2.5 py-1 bg-white/[0.05] border border-white/[0.1] rounded text-[10px] font-mono text-gray-300 shadow-sm">Ctrl + Enter</kbd></div>
+                </div>
               </div>
               <div className="space-y-4">
                 <h4 className="text-[10px] font-black text-cyan-600 uppercase tracking-[0.2em]">Job Management</h4>
