@@ -94,7 +94,16 @@ def crop_normalize(setting: Setting):
 
     output_path = setting.output_path
     if not output_path:
-        output_path = input_path.with_stem(f'{input_path.stem}_cropped')
+        # Without start/end in the stem, multiple crop jobs on the same
+        # source (e.g. cropping out several segments to merge later) all
+        # resolve to the same "{stem}_cropped" path and silently overwrite
+        # each other -- mirror split_normalize's disambiguation.
+        stem = f'{input_path.stem}_cropped'
+        if setting.start:
+            stem += f'_{isodate.duration_isoformat(setting.start, "PT%HH%MM%S.%fS")}'
+        if setting.end:
+            stem += f'_{isodate.duration_isoformat(setting.end, "PT%HH%MM%S.%fS")}'
+        output_path = input_path.with_stem(stem)
 
     if setting.output_dir:
         output_path = setting.output_dir / output_path.name
