@@ -1,6 +1,6 @@
 [project]
 name = "ffxpy"
-version = "0.5.2"
+version = "0.5.3"
 description = "A highly optimized CLI tool to simplify complex ffmpeg operations via YAML-defined workflows."
 readme = "README.md"
 authors = [
