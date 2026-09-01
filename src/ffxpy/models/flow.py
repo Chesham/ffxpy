@@ -180,7 +180,13 @@ def merge_normalize(setting: Setting, merge_paths: list[Path] | None = None):
         setting.input_path = working_dir / 'ffxpy_merge_list.txt'
 
     if not setting.output_path and setting.merge_paths:
-        stem = setting.merge_paths[0].stem.split('_split')[0]
+        # Reduce back to the original source's base name, same as the
+        # split case -- otherwise a crop-sourced merge would carry the
+        # cropped clip's own "_cropped_<start>_<end>" suffix straight into
+        # the merged output's filename.
+        stem = setting.merge_paths[0].stem
+        for marker in ('_split', '_cropped'):
+            stem = stem.split(marker)[0]
         suffix = setting.merge_paths[0].suffix
         filename = f'{stem}{suffix}'
         if setting.output_dir:
