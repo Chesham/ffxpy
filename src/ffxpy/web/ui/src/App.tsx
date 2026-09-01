@@ -459,6 +459,8 @@ export default function App() {
   const isSyncingFromYaml = useRef(false)
   const sourcesRef = useRef(sources)
   sourcesRef.current = sources
+  const sourceOrderRef = useRef(sourceOrder)
+  sourceOrderRef.current = sourceOrder
 
   const videoInfo = sources[activeSourcePath]?.info ?? null
   const establishedMap = sources[activeSourcePath]?.establishedMap ?? {}
@@ -466,12 +468,6 @@ export default function App() {
     const [num, den] = fps.split('/')
     const d = parseFloat(den)
     return d ? parseFloat(num) / d : parseFloat(num)
-  }
-  const bitrateStrToBytes = (s: string | undefined): number => {
-    const m = s?.trim().match(/^([\d.]+)\s*([kKmMgG]?)/)
-    if (!m) return 0
-    const mult = { k: 1_000, m: 1_000_000, g: 1_000_000_000 }[m[2].toLowerCase()] ?? 1
-    return parseFloat(m[1]) * mult
   }
   // Reference-only hint (never auto-applied) so users don't have to look up a
   // source's native frame rate themselves before deciding whether/what to type.
@@ -485,6 +481,33 @@ export default function App() {
     const br = path ? sources[path]?.info?.streams.find(s => s.codec_type === 'audio')?.bit_rate : undefined
     return br ? `${Math.round(br / 1000)}k` : undefined
   }
+  // Recomputed from scratch (not ratcheted) over exactly the given paths, so
+  // it stays correct whether sources were added *or* removed -- removing the
+  // one source that justified a high value shouldn't leave that value
+  // stranded once nothing in the pool still supports it.
+  const computeSeededSettings = useCallback((
+    sourcesMap: typeof sources,
+    paths: string[]
+  ): { video_bitrate?: string; audio_bitrate?: string; fps?: string } => {
+    let maxVideoBitrate = 0, maxAudioBitrate = 0, maxFps = 0
+    let fpsStr: string | undefined
+    for (const p of paths) {
+      const info = sourcesMap[p]?.info
+      if (!info) continue
+      const videoStream = info.streams?.find(s => s.codec_type === 'video')
+      const audioStream = info.streams?.find(s => s.codec_type === 'audio')
+      if (info.bit_rate && info.bit_rate > maxVideoBitrate) maxVideoBitrate = info.bit_rate
+      if (audioStream?.bit_rate && audioStream.bit_rate > maxAudioBitrate) maxAudioBitrate = audioStream.bit_rate
+      const fpsVal = videoStream?.r_frame_rate ? fpsToFloat(videoStream.r_frame_rate) : 0
+      if (fpsVal > maxFps) { maxFps = fpsVal; fpsStr = videoStream!.r_frame_rate }
+    }
+    const video_bitrate = maxVideoBitrate ? (() => {
+      const kbps = Math.round(maxVideoBitrate / 1000)
+      return kbps >= 1000 ? `${parseFloat((kbps / 1000).toFixed(2))}M` : `${kbps}k`
+    })() : undefined
+    const audio_bitrate = maxAudioBitrate ? `${Math.round(maxAudioBitrate / 1000)}k` : undefined
+    return { video_bitrate, audio_bitrate, fps: fpsStr }
+  }, [])
   const sourceList = sourceOrder.map(p => sources[p]).filter((s): s is MediaSource => !!s)
   const basename = (p: string) => p.split('/').pop() || p
 
@@ -531,37 +554,39 @@ export default function App() {
       setCurrentTime(0)
       setEditTime(formatTime(0))
 
-      // Every source seeds the global defaults up to the highest value seen
-      // across the whole Media Pool so far -- not just the first one added --
-      // so mixing a low-bitrate/low-fps source with a higher one still lands
-      // on the higher source's numbers. Compared directly against the field's
-      // current live value (not a ref) each time, so this works the same
-      // whether that value came from an earlier auto-fill, a manual edit, or
-      // localStorage from a previous session -- always just "is this source
-      // higher than what's there now". These are plain values the user can
-      // freely overwrite -- harmless if left as-is alongside
-      // video_codec/audio_codec=copy (ffmpeg just ignores bitrate on a copied
-      // stream), but NOT harmless for fps: a copy job with a filter attached
-      // is invalid and ffmpeg will refuse to run it, which is exactly the
-      // point -- an incompatible combination should fail loudly with a log
-      // instead of being silently "fixed" for the user.
-      const videoStream = d.streams?.find((s: StreamInfo) => s.codec_type === 'video')
-      const audioStream = d.streams?.find((s: StreamInfo) => s.codec_type === 'audio')
-      const seeded: string[] = []
+      // Global defaults seed to the highest value seen across the whole
+      // Media Pool -- not just this one source -- so mixing a low-bitrate/
+      // low-fps source with a higher one still lands on the higher source's
+      // numbers. Recomputed from scratch over every current source (see
+      // computeSeededSettings) rather than incrementally ratcheted, so this
+      // stays correct if a higher source is later removed too. These are
+      // plain values the user can freely overwrite -- harmless if left as-is
+      // alongside video_codec/audio_codec=copy (ffmpeg just ignores bitrate
+      // on a copied stream), but NOT harmless for fps: a copy job with a
+      // filter attached is invalid and ffmpeg will refuse to run it, which
+      // is exactly the point -- an incompatible combination should fail
+      // loudly with a log instead of being silently "fixed" for the user.
+      const newSourcesMap = {
+        ...sourcesRef.current,
+        [path]: { path, info: { ...d, duration_sec: ts }, establishedMap: {} },
+      }
+      const allPaths = sourceOrderRef.current.includes(path)
+        ? sourceOrderRef.current
+        : [...sourceOrderRef.current, path]
+      const recomputed = computeSeededSettings(newSourcesMap, allPaths)
       setGlobalSetting(prev => {
         const next = { ...prev }
-        if (d.bit_rate && d.bit_rate > bitrateStrToBytes(prev.video_bitrate)) {
-          const kbps = Math.round(d.bit_rate / 1000)
-          next.video_bitrate = kbps >= 1000 ? `${parseFloat((kbps / 1000).toFixed(2))}M` : `${kbps}k`
+        const seeded: string[] = []
+        if (recomputed.video_bitrate && recomputed.video_bitrate !== prev.video_bitrate) {
+          next.video_bitrate = recomputed.video_bitrate
           seeded.push(`video ${next.video_bitrate}`)
         }
-        if (audioStream?.bit_rate && audioStream.bit_rate > bitrateStrToBytes(prev.audio_bitrate)) {
-          next.audio_bitrate = `${Math.round(audioStream.bit_rate / 1000)}k`
+        if (recomputed.audio_bitrate && recomputed.audio_bitrate !== prev.audio_bitrate) {
+          next.audio_bitrate = recomputed.audio_bitrate
           seeded.push(`audio ${next.audio_bitrate}`)
         }
-        const fpsVal = videoStream?.r_frame_rate ? fpsToFloat(videoStream.r_frame_rate) : 0
-        if (fpsVal > (prev.fps ? fpsToFloat(prev.fps) : 0)) {
-          next.fps = videoStream!.r_frame_rate
+        if (recomputed.fps && recomputed.fps !== prev.fps) {
+          next.fps = recomputed.fps
           seeded.push(`fps ${next.fps}`)
         }
         if (seeded.length) setToastMessage(`Auto-detected (max across sources): ${seeded.join(', ')}`)
@@ -570,7 +595,7 @@ export default function App() {
     } catch (e: unknown) {
       if (!opts?.silent) setError(e instanceof Error ? e.message : String(e))
     } finally { setIsSubmitting(false) }
-  }, [])
+  }, [computeSeededSettings])
 
   const addSources = useCallback(async (paths: string[]) => {
     for (const p of paths) {
@@ -585,6 +610,17 @@ export default function App() {
     const remaining = sourceOrder.filter(p => p !== path)
     setSourceOrder(remaining)
     if (activeSourcePath === path) setActiveSourcePath(remaining[0] || '')
+
+    // Recompute (not just leave stale) -- the value(s) this source seeded
+    // shouldn't stay stranded in Global Settings once it's the only source
+    // that supported them.
+    const recomputed = computeSeededSettings(sources, remaining)
+    setGlobalSetting(prev => ({
+      ...prev,
+      video_bitrate: recomputed.video_bitrate ?? '',
+      audio_bitrate: recomputed.audio_bitrate,
+      fps: recomputed.fps,
+    }))
   }
 
   const openSettings = useCallback(() => {
