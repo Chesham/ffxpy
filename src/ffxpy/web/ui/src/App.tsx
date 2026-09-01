@@ -1007,12 +1007,34 @@ export default function App() {
                     if (!isTyping) setEditTime(formatTime(t))
                   }
                 }}
-                onError={() => {
+                onError={async () => {
                   const brokenPath = activeSourcePath
-                  setError("Video resource unavailable (File may have been deleted or moved)");
-                  setSources(prev => { const next = { ...prev }; delete next[brokenPath]; return next })
-                  setSourceOrder(prev => prev.filter(p => p !== brokenPath))
-                  setActiveSourcePath('')
+                  // A playback error here can mean the file is genuinely
+                  // gone, but just as often means the browser simply can't
+                  // decode this container/codec (e.g. a file named .mp4 that
+                  // is actually a raw MPEG-TS stream) -- which has no bearing
+                  // on whether ffmpeg can still process it. Check the real
+                  // HTTP status via a 1-byte range request instead of
+                  // assuming, so we only evict the source (and blame
+                  // "deleted or moved") when it's actually missing.
+                  let status = 0
+                  try {
+                    const res = await fetch(
+                      `${API_BASE}/api/stream?path=${encodeURIComponent(brokenPath)}`,
+                      { headers: { Range: 'bytes=0-0' } }
+                    )
+                    status = res.status
+                  } catch {
+                    status = 0
+                  }
+                  if (status === 404) {
+                    setError('Video resource unavailable (File may have been deleted or moved)')
+                    setSources(prev => { const next = { ...prev }; delete next[brokenPath]; return next })
+                    setSourceOrder(prev => prev.filter(p => p !== brokenPath))
+                    setActiveSourcePath('')
+                  } else {
+                    setError('無法在瀏覽器預覽此檔案（容器/編碼格式不支援，例如副檔名是 .mp4 但實際是 MPEG-TS 串流），但檔案本身存在，仍可正常用於轉檔，不會從 Media Pool 移除。')
+                  }
                 }}
                 controls /> : <div className="w-full h-full flex flex-col items-center justify-center opacity-[0.03]"><Film size={180} /></div>}
               
