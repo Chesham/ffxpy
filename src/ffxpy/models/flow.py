@@ -1,3 +1,4 @@
+from datetime import timedelta
 from pathlib import Path
 
 import isodate
@@ -5,6 +6,16 @@ import pydantic
 
 from ffxpy.const import Command
 from ffxpy.setting import Setting
+
+
+def _format_duration_for_filename(td: timedelta) -> str:
+    # HH-MM-SS.mmm -- dashes instead of colons since Windows filenames can't
+    # contain ":", millisecond (not microsecond) precision keeps it readable.
+    total_ms = round(td.total_seconds() * 1000)
+    hours, rem_ms = divmod(total_ms, 3_600_000)
+    minutes, rem_ms = divmod(rem_ms, 60_000)
+    seconds, ms = divmod(rem_ms, 1000)
+    return f'{hours:02d}-{minutes:02d}-{seconds:02d}.{ms:03d}'
 
 
 class FlowJob(pydantic.BaseModel):
@@ -99,10 +110,12 @@ def crop_normalize(setting: Setting):
         # resolve to the same "{stem}_cropped" path and silently overwrite
         # each other -- mirror split_normalize's disambiguation.
         stem = f'{input_path.stem}_cropped'
-        if setting.start:
-            stem += f'_{isodate.duration_isoformat(setting.start, "PT%HH%MM%S.%fS")}'
-        if setting.end:
-            stem += f'_{isodate.duration_isoformat(setting.end, "PT%HH%MM%S.%fS")}'
+        # `is not None`, not truthiness -- timedelta(0) (start: 00:00:00) is
+        # falsy and would otherwise silently drop out of the filename.
+        if setting.start is not None:
+            stem += f'_{_format_duration_for_filename(setting.start)}'
+        if setting.end is not None:
+            stem += f'_{_format_duration_for_filename(setting.end)}'
         output_path = input_path.with_stem(stem)
 
     if setting.output_dir:
@@ -123,11 +136,13 @@ def split_normalize(setting: Setting):
     if not output_path:
         if setting.with_suffix:
             stem = f'{input_path.stem}_split'
-            if setting.start:
+            # `is not None`, not truthiness -- timedelta(0) (start: 00:00:00)
+            # is falsy and would otherwise silently drop out of the filename.
+            if setting.start is not None:
                 stem += (
                     f'_{isodate.duration_isoformat(setting.start, "PT%HH%MM%S.%fS")}'
                 )
-            if setting.end:
+            if setting.end is not None:
                 stem += f'_{isodate.duration_isoformat(setting.end, "PT%HH%MM%S.%fS")}'
             output_path = input_path.with_stem(stem)
         else:
