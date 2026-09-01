@@ -917,13 +917,32 @@ async def flow(
             console.print(f'[red]Flow failed:[/red] {e}')
         raise typer.Exit(code=1)
     finally:
+
+        async def _unlink_with_retry(path: Path) -> None:
+            # Windows locks a file while a process still has it open --
+            # right after cancelling a job, the OS may not have finished
+            # releasing that handle yet even though the process has already
+            # been waited on, so retry briefly instead of giving up on the
+            # first failure.
+            for attempt in range(3):
+                try:
+                    path.unlink(missing_ok=True)
+                    return
+                except OSError as e:
+                    if attempt == 2:
+                        console.print(
+                            f'[yellow]Could not clean up "{path}": {e}[/yellow]'
+                        )
+                    else:
+                        await asyncio.sleep(0.3)
+
         for job in flow_data.jobs:
             if job.command != Command.MERGE:
                 continue
             # The merge job's own keep_temp decides whether its own
             # merge_list.txt survives.
             if job.setting.input_path and not job.setting.keep_temp:
-                job.setting.input_path.unlink(missing_ok=True)
+                await _unlink_with_retry(job.setting.input_path)
             for path in job.setting.merge_paths:
                 producer = output_to_job.get(path)
                 # Only ever clean up a file this flow itself produced (found
@@ -932,7 +951,7 @@ async def flow(
                 # untouched regardless of keep_temp, since deleting a file we
                 # didn't create is never this flow's call to make.
                 if producer is not None and not producer.setting.keep_temp:
-                    path.unlink(missing_ok=True)
+                    await _unlink_with_retry(path)
 
 
 @app.async_command(

@@ -201,6 +201,12 @@ async def run_ffmpeg(
         except Exception:
             try:
                 process.kill()
+                # Without this, we can return before the OS has actually
+                # reaped the process -- on Windows that means the file it
+                # had open for writing is still locked, so a cleanup unlink
+                # of that (now-orphaned) partial output racing right behind
+                # this fails silently and leaves the file behind.
+                await process.wait()
             except Exception:
                 pass
         raise

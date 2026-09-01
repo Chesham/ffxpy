@@ -644,11 +644,22 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
         # keep_temp said to delete it (see Phase 0 above), so no further
         # flow-level gate is needed here.
         for f in res_cleanup:
-            if f.exists():
+            if not f.exists():
+                continue
+            # Windows locks a file while a process still has it open --
+            # right after cancelling a job, the OS may not have finished
+            # releasing that handle yet even though the process has already
+            # been waited on, so retry briefly instead of giving up on the
+            # first failure.
+            for attempt in range(3):
                 try:
                     f.unlink()
-                except Exception:
-                    pass
+                    break
+                except OSError as e:
+                    if attempt == 2:
+                        console.print(f'[yellow]Could not clean up "{f}": {e}[/yellow]')
+                    else:
+                        await asyncio.sleep(0.3)
 
 
 @app.post('/api/execute')
