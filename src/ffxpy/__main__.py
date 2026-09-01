@@ -558,6 +558,16 @@ async def flow(
         yaml.safe_load(flow_path.open()), context={'setting': setting}
     )
 
+    # Maps each job's own output back to the job that produced it, so cleanup
+    # below can check *that* job's own keep_temp -- not just the flow-level
+    # default -- before deleting a file another job consumes (e.g. a
+    # crop/split output a later merge job reads via merge_paths).
+    output_to_job = {
+        job.setting.output_path: job
+        for job in flow_data.jobs
+        if job.setting.output_path
+    }
+
     # Smart Concurrency: Boost if we have many 'copy' jobs
     copy_jobs = [
         j
@@ -907,13 +917,22 @@ async def flow(
             console.print(f'[red]Flow failed:[/red] {e}')
         raise typer.Exit(code=1)
     finally:
-        if not flow_data.setting.keep_temp:
-            for job in flow_data.jobs:
-                if job.command == Command.MERGE and not job.setting.keep_temp:
-                    if job.setting.input_path:
-                        job.setting.input_path.unlink(missing_ok=True)
-                    for path in job.setting.merge_paths:
-                        path.unlink(missing_ok=True)
+        for job in flow_data.jobs:
+            if job.command != Command.MERGE:
+                continue
+            # The merge job's own keep_temp decides whether its own
+            # merge_list.txt survives.
+            if job.setting.input_path and not job.setting.keep_temp:
+                job.setting.input_path.unlink(missing_ok=True)
+            for path in job.setting.merge_paths:
+                producer = output_to_job.get(path)
+                # Only ever clean up a file this flow itself produced (found
+                # in output_to_job) -- merge_paths supplied directly by the
+                # user (not from an earlier job in this flow) are left
+                # untouched regardless of keep_temp, since deleting a file we
+                # didn't create is never this flow's call to make.
+                if producer is not None and not producer.setting.keep_temp:
+                    path.unlink(missing_ok=True)
 
 
 @app.async_command(

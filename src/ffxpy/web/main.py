@@ -388,6 +388,16 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
                     ],
                 )
 
+        # Maps each job's own output back to the job that produced it, so
+        # cleanup below can check *that* job's own keep_temp -- not just the
+        # flow-level default -- before deleting a file another job consumes
+        # (e.g. a crop/split output a later merge job reads via merge_paths).
+        output_to_job = {
+            job.setting.output_path: job
+            for job in flow.jobs
+            if job.setting.output_path
+        }
+
         # Phase 1: Pre-flight Validation
         for index, job in enumerate(flow.jobs):
             w = 1.0
@@ -495,9 +505,18 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
                         for p in job.setting.merge_paths
                     ]
                     job.setting.input_path.write_text(''.join(lines), encoding='utf-8')
-                    res_cleanup.add(job.setting.input_path)
+                    if not job.setting.keep_temp:
+                        res_cleanup.add(job.setting.input_path)
                     for path in job.setting.merge_paths:
-                        res_cleanup.add(path)
+                        producer = output_to_job.get(path)
+                        # Only ever clean up a file this flow itself produced
+                        # (found in output_to_job) -- merge_paths supplied
+                        # directly by the user (not from an earlier job in
+                        # this flow) are left untouched regardless of
+                        # keep_temp, since deleting a file we didn't create
+                        # is never this flow's call to make.
+                        if producer is not None and not producer.setting.keep_temp:
+                            res_cleanup.add(path)
 
             input_path = job.setting.input_path or Path('temp.mp4')
             output_path = job.setting.output_path or Path('out.mp4')
@@ -609,13 +628,15 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
     except Exception as e:
         await queue.put({'status': 'failed', 'error': str(e)})
     finally:
-        if 'flow' in locals() and not flow.setting.keep_temp:
-            for f in res_cleanup:
-                if f.exists():
-                    try:
-                        f.unlink()
-                    except Exception:
-                        pass
+        # Each entry in res_cleanup was only added if its producing job's own
+        # keep_temp said to delete it (see Phase 0 above), so no further
+        # flow-level gate is needed here.
+        for f in res_cleanup:
+            if f.exists():
+                try:
+                    f.unlink()
+                except Exception:
+                    pass
 
 
 @app.post('/api/execute')
