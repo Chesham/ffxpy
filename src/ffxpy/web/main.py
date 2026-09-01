@@ -398,6 +398,28 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
             if job.setting.output_path
         }
 
+        # Decide up front (before any job actually runs) which files this
+        # flow should delete once it's done -- merge_paths are already fully
+        # resolved by merge_normalize above. Deciding this eagerly, rather
+        # than only when the merge job itself runs, means the `finally`
+        # cleanup below still knows what to remove even if the flow is
+        # cancelled or fails partway through split/crop jobs, before any
+        # merge job ever starts.
+        for job in flow.jobs:
+            if job.command != Command.MERGE:
+                continue
+            if job.setting.input_path and not job.setting.keep_temp:
+                res_cleanup.add(job.setting.input_path)
+            for path in job.setting.merge_paths:
+                producer = output_to_job.get(path)
+                # Only ever clean up a file this flow itself produced (found
+                # in output_to_job) -- merge_paths supplied directly by the
+                # user (not from an earlier job in this flow) are left
+                # untouched regardless of keep_temp, since deleting a file we
+                # didn't create is never this flow's call to make.
+                if producer is not None and not producer.setting.keep_temp:
+                    res_cleanup.add(path)
+
         # Phase 1: Pre-flight Validation
         for index, job in enumerate(flow.jobs):
             w = 1.0
@@ -505,18 +527,8 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
                         for p in job.setting.merge_paths
                     ]
                     job.setting.input_path.write_text(''.join(lines), encoding='utf-8')
-                    if not job.setting.keep_temp:
-                        res_cleanup.add(job.setting.input_path)
-                    for path in job.setting.merge_paths:
-                        producer = output_to_job.get(path)
-                        # Only ever clean up a file this flow itself produced
-                        # (found in output_to_job) -- merge_paths supplied
-                        # directly by the user (not from an earlier job in
-                        # this flow) are left untouched regardless of
-                        # keep_temp, since deleting a file we didn't create
-                        # is never this flow's call to make.
-                        if producer is not None and not producer.setting.keep_temp:
-                            res_cleanup.add(path)
+                    # res_cleanup for this job's input_path/merge_paths was
+                    # already decided in Phase 0, before any job ran.
 
             input_path = job.setting.input_path or Path('temp.mp4')
             output_path = job.setting.output_path or Path('out.mp4')
