@@ -5,7 +5,7 @@ import isodate
 import pydantic
 
 from ffxpy.const import Command
-from ffxpy.setting import Setting
+from ffxpy.setting import Setting, get_temp_cache_dir, is_directory_writable
 
 
 def _format_duration_for_filename(td: timedelta) -> str:
@@ -169,12 +169,11 @@ def merge_normalize(setting: Setting, merge_paths: list[Path] | None = None):
             )
 
     if not setting.working_dir and setting.merge_paths:
-        # A merge job built from per-job input_path (e.g. the web UI's Media
-        # Pool) has no working_dir of its own -- falling back to Path('.')
-        # here placed the merge list / output relative to whatever directory
-        # the process was launched from (e.g. a Windows install location
-        # without write access) instead of the clips being merged.
-        working_dir = setting.merge_paths[0].parent
+        candidate_dir = setting.merge_paths[0].resolve().parent
+        if is_directory_writable(candidate_dir):
+            working_dir = candidate_dir
+        else:
+            working_dir = get_temp_cache_dir(setting.merge_paths[0])
 
     if not setting.input_path or setting.input_path.suffix.lower() != '.txt':
         setting.input_path = working_dir / 'ffxpy_merge_list.txt'

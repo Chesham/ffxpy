@@ -1,3 +1,4 @@
+import os
 import shutil
 import subprocess
 import tempfile
@@ -44,7 +45,13 @@ def before_all(context):
 def after_all(context):
     # Clean up temporary directory
     if hasattr(context, 'tmp_dir'):
-        shutil.rmtree(context.tmp_dir)
+        for root, dirs, _ in os.walk(context.tmp_dir):
+            for d in dirs:
+                try:
+                    os.chmod(os.path.join(root, d), 0o777)
+                except OSError:
+                    pass
+        shutil.rmtree(context.tmp_dir, ignore_errors=True)
 
     # Combine and report coverage
     print('\nGenerating Coverage Report...')

@@ -1,5 +1,6 @@
 import os
 import subprocess
+from pathlib import Path
 
 from behave import given, then, when
 from grappa import should
@@ -141,3 +142,23 @@ def step_when_run_web_background_flow(context, file_name):
         if msg.get('status') == 'failed':
             print('Web flow failed:', msg.get('error'))
             context.return_code = 1
+
+
+@given('我建立唯讀目錄 "{dir_name}" 並將 "{src_file}" 複製為 "{dst_name}"')
+def step_given_create_readonly_dir_with_file(context, dir_name, src_file, dst_name):
+    import shutil
+    src_path = Path(src_file.replace('{video_5s}', str(context.video_5s)))
+    ro_dir = context.working_dir / dir_name
+    ro_dir.mkdir(parents=True, exist_ok=True)
+    dst_path = ro_dir / dst_name
+    shutil.copy2(src_path, dst_path)
+    os.chmod(ro_dir, 0o555)
+    context.readonly_file = dst_path
+
+
+@then('檔案 "{file_name}" 在 OS 暫存快取目錄中應該存在')
+def step_then_file_in_os_temp_should_exist(context, file_name):
+    from ffxpy.setting import get_temp_cache_dir
+    cache_dir = get_temp_cache_dir(context.readonly_file)
+    target_file = cache_dir / file_name
+    target_file.exists() | should.be.true

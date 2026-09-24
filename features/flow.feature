@@ -53,3 +53,21 @@
     並且 檔案 "safe_part2.mp4" 應該不存在
     並且 檔案 "safe_merged.mp4" 應該存在
     並且 檔案 "ffxpy_merge_list.txt" 應該不存在
+
+  場景: 來源影片所在目錄為唯讀時自動退避至 OS 暫存快取目錄
+    假如 我建立唯讀目錄 "ro_media" 並將 "{video_5s}" 複製為 "ro_video.mp4"
+    並且 我建立檔案 "ro_flow.yml"，內容如下
+      """
+      setting:
+        input_path: "ro_media/ro_video.mp4"
+        keep_temp: true
+      jobs:
+        - name: "Split 1"
+          command: "split"
+          setting:
+            end: "00:00:01"
+            output_path: "ro_split1.mp4"
+      """
+    當 我執行指令 "ffx flow ro_flow.yml"
+    那麼 結束狀態碼應該為 0
+    並且 檔案 "ro_split1.mp4" 在 OS 暫存快取目錄中應該存在

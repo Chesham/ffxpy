@@ -1,10 +1,33 @@
+import hashlib
 import os
 import shutil
+import tempfile
+import uuid
 from datetime import timedelta
 from pathlib import Path
 
 import pydantic
 import pydantic_settings
+
+
+def is_directory_writable(directory: Path) -> bool:
+    if not directory.exists() or not directory.is_dir():
+        return False
+    test_file = directory / f'.ffxpy_write_test_{uuid.uuid4().hex}'
+    try:
+        test_file.touch(exist_ok=False)
+        test_file.unlink(missing_ok=True)
+        return True
+    except (OSError, PermissionError):
+        return False
+
+
+def get_temp_cache_dir(input_path: Path) -> Path:
+    resolved_path = str(input_path.resolve())
+    path_hash = hashlib.sha256(resolved_path.encode('utf-8')).hexdigest()[:12]
+    cache_dir = Path(tempfile.gettempdir()) / 'ffxpy' / f'cache_{path_hash}'
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
 
 
 def get_default_concurrency() -> int:
@@ -112,7 +135,11 @@ class Setting(pydantic_settings.BaseSettings):
             raise ValueError('audio_bitrate must be set when audio_codec is not "copy"')
 
         if not self.working_dir and self.input_path:
-            self.working_dir = self.input_path.parent
+            candidate_dir = self.input_path.resolve().parent
+            if is_directory_writable(candidate_dir):
+                self.working_dir = candidate_dir
+            else:
+                self.working_dir = get_temp_cache_dir(self.input_path)
 
         return self
 

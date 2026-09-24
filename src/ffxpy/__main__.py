@@ -1005,8 +1005,14 @@ def compile_commandline(
             args += ['-ss', str(setting.start - seek_buffer)]
 
     input_path_final = input_path
-    if setting.working_dir and not input_path.is_absolute():
-        input_path_final = setting.working_dir / input_path.name
+    if (
+        setting.working_dir
+        and not input_path.is_absolute()
+        and not input_path.exists()
+    ):
+        alt_path = setting.working_dir / input_path.name
+        if alt_path.exists():
+            input_path_final = alt_path
 
     args += ['-i', str(input_path_final)]
 
