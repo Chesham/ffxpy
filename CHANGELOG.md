@@ -1,5 +1,72 @@
 # CHANGELOG
 
+## 🚀 [0.6.0] - 2026-09-25
+
+### ✨ Core Features & Enhancements
+- 💾 **Smart Temp Fallback**: Added automatic fallback to an OS temp cache directory (`/tmp/ffxpy/cache_<sha256>`) when source input directories are read-only (e.g. read-only mounts, shared network storage), maintaining deterministic caching for `keep_temp` and fast execution without permission errors.
+- 📁 **Auto-Create Output Directory**: Automatically creates non-existent output directories and parent folders when executing flows or single jobs.
+- 📂 **Preserve Output Subdirectories**: Preserved relative subdirectories in output paths during flow execution rather than flattening them.
+- 🧭 **File Browser Navigation**: Added permanent `.. (Parent Directory)` option and `Alt+ArrowUp` shortcut to quickly traverse up directory structures in the file browser.
+- 🧠 **Path Persistence**: The file browser dialog remembers the last accessed directory in `localStorage` and automatically walks up to the nearest existing parent directory if a path no longer exists.
+
+---
+
+## 🚀 [0.5.3] - 2026-09-01
+
+### 🚀 Stability & Process Management
+- 🛡️ **Graceful Process Cancellation**: Ensured killed `ffmpeg` processes are properly waited on and file handles released before attempting temporary file cleanup, with retry mechanisms for locked files.
+- 🧹 **Early Merge Cleanup**: Added tracking for merge intermediate clips in flow execution Phase 0, ensuring proper cleanup even if a workflow is aborted or cancelled mid-run.
+- ⚙️ **Per-Job Temp Retention**: Respected individual job `keep_temp` settings when handling merge inputs rather than using global overrides.
+
+### 🎨 Web UI & UX Improvements
+- 🛡️ **Media Pool Resilience**: Prevented accidental eviction of sources from the Media Pool on transient preview decode errors unless the source file is actually missing (404).
+- 🔄 **Dynamic Setting Reseeding**: Recomputed default seeded settings from remaining active media sources when a source file is removed.
+- 🕒 **Time Input Sizing**: Compacted In/Out Point time inputs to better fit content without layout overflow.
+- 🔤 **Clean Typography**: Streamlined monospace font stack to standard generic keywords across the UI.
+
+### 🔧 Bug Fixes
+- 🏷️ **Output Filename Disambiguation**: Added start/end timestamp ranges (`HH-MM-SS.mmm`) to crop output filenames to prevent file overwrite collisions.
+- ✂️ **Normalized Clip Names**: Reduced crop-sourced clip names to base filenames in merge lists to prevent path resolution conflicts.
+
+---
+
+## 🚀 [0.5.2] - 2026-08-18
+
+### 🎨 Web UI & UX Improvements
+- ⌨️ **Keyboard Shortcut Documentation**: Added comprehensive documentation for File Selector and navigation shortcuts in the keyboard help modal.
+- 🎯 **Browser Input Autofocus**: Automatically focuses the path input field when opening the file browser dialog, and added `Ctrl/Cmd+Enter` confirmation shortcut.
+
+### 🔧 Bug Fixes
+- 🎞️ **Filter Guard in Copy Mode**: Guarded against applying the `fps` filter when `video_codec` is set to `copy`, avoiding invalid ffmpeg stream-copy configurations.
+- 🔄 **Default Merge Codec**: Changed merge task default video codec from `copy` to `inherit` to properly handle mixed or transcoded inputs.
+
+---
+
+## 🚀 [0.5.1] - 2026-08-18
+
+### 🔧 Bug Fixes
+- 📍 **Merge Path Resolution**: Resolved merge list file and output paths relative to the clip folder instead of the process launch current working directory, preventing broken concat lists when running from arbitrary directories.
+
+---
+
+## 🚀 [0.5.0] - 2026-08-18
+
+### ✨ Core Features
+- 🗂️ **Media Pool & Multi-Source Editing**: Added in-page interactive file browser dialog and multi-source Media Pool to switch between and edit multiple video sources seamlessly in the Web UI.
+- ⚡ **Chunked HTTP 206 Streaming**: Implemented partial-content chunked streaming response in the Web API server to eliminate long buffering freezes during timeline seeking.
+- 🔄 **Backend Live Reload**: Added `--reload` option to `ffx ui` for developer backend auto-reload.
+- ⌨️ **Quick Job Creation Shortcuts**: Added `Alt+1`, `Alt+2`, `Alt+3` keyboard shortcuts in the Web UI for quick job creation.
+
+### 🚀 Performance & Audio/Video Sync
+- ⏱️ **Timestamp Regeneration & VFR Fix**: Used `+genpts` and avoided MP4 edit lists (`-avoid_negative_ts make_zero`) during stream copy to eliminate variable frame rate (VFR) bugs and extreme max frame rate glitches.
+- 🎯 **Accurate Keyframe Seeking**: Added a 50ms buffer (`epsilon`) to copy mode seek timestamps to prevent snapping backwards to the preceding keyframe.
+- 🎵 **A/V Sync & Rate Normalization**: Kept clip audio in sync and normalized mixed source frame rates when merging video segments.
+
+### 🪟 Windows Compatibility
+- 🔒 **File Handle Release**: Switched to synchronous file I/O within the async streaming generator to immediately release Windows file locks when clients disconnect.
+
+---
+
 ## 🚀 [0.4.1] - 2026-06-24
 
 ### ✨ Core Features
