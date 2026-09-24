@@ -811,6 +811,9 @@ async def flow(
                 if not job.setting.output_path:
                     raise ValueError(f'job {job_name} has no output path')
 
+                if not setting.dry_run:
+                    job.setting.output_path.parent.mkdir(parents=True, exist_ok=True)
+
                 args = compile_commandline(
                     job.setting,
                     job.setting.input_path,
@@ -1108,8 +1111,12 @@ def compile_commandline(
     if setting.overwrite:
         args.append('-y')
     output_path_final = output_path
-    if setting.working_dir and not output_path.is_absolute():
-        output_path_final = setting.working_dir / output_path.name
+    if (
+        setting.working_dir
+        and not output_path.is_absolute()
+        and not str(output_path).startswith(str(setting.working_dir))
+    ):
+        output_path_final = setting.working_dir / output_path
     args.append(str(output_path_final))
     return args
 

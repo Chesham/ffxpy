@@ -536,6 +536,8 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
 
             input_path = job.setting.input_path or Path('temp.mp4')
             output_path = job.setting.output_path or Path('out.mp4')
+            if not job.setting.dry_run:
+                output_path.parent.mkdir(parents=True, exist_ok=True)
             args = compile_commandline(
                 job.setting,
                 input_path,

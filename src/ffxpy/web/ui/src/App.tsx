@@ -308,6 +308,11 @@ function FileBrowserModal({ initialPath, onConfirm, onClose }: { initialPath?: s
   }
 
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowUp' && e.altKey) {
+      e.preventDefault()
+      if (parent) load(parent)
+      return
+    }
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       // Plain Enter is already used to navigate into a highlighted folder or
       // toggle a file's selection, so use Ctrl/Cmd+Enter to submit -- lets the
@@ -376,6 +381,17 @@ function FileBrowserModal({ initialPath, onConfirm, onClose }: { initialPath?: s
           {!loading && !error && warning && (
             <div className="flex items-center gap-2 px-4 py-2 mb-1 rounded-xl bg-amber-500/10 text-amber-500 text-[10px] font-bold">
               <AlertCircle size={12} className="shrink-0"/> {warning}
+            </div>
+          )}
+          {!loading && !error && parent && (
+            <div
+              onClick={() => load(parent)}
+              className="flex items-center gap-3 px-4 py-2.5 rounded-xl cursor-pointer transition-colors hover:bg-white/[0.04] text-gray-300 border-b border-white/[0.03] mb-1 group"
+            >
+              <Folder size={14} className="text-amber-500/80 group-hover:text-amber-500 shrink-0" />
+              <span className="text-xs font-mono font-bold text-cyan-400 group-hover:text-cyan-300">.. (Parent Directory)</span>
+              <span className="text-[10px] text-gray-600 truncate flex-1">{parent}</span>
+              <ChevronRight size={14} className="text-gray-600 shrink-0" />
             </div>
           )}
           {!loading && !error && filteredEntries.length === 0 && <div className="text-center text-gray-700 text-xs italic py-10">{filterPart ? 'No matches' : 'Empty directory'}</div>}

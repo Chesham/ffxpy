@@ -71,3 +71,21 @@
     當 我執行指令 "ffx flow ro_flow.yml"
     那麼 結束狀態碼應該為 0
     並且 檔案 "ro_split1.mp4" 在 OS 暫存快取目錄中應該存在
+
+  場景: 指定不存在的 output_dir 時應自動建立該目錄
+    假如 我建立檔案 "outdir_flow.yml"，內容如下
+      """
+      setting:
+        input_path: "{video_5s}"
+        output_dir: "new_created_folder"
+      jobs:
+        - name: "Split 1"
+          command: "split"
+          setting:
+            end: "00:00:01"
+            output_path: "out1.mp4"
+      """
+    當 我執行指令 "ffx flow outdir_flow.yml"
+    那麼 結束狀態碼應該為 0
+    並且 目錄 "new_created_folder" 應該存在
+    並且 檔案 "new_created_folder/out1.mp4" 應該存在

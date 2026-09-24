@@ -141,6 +141,9 @@ class Setting(pydantic_settings.BaseSettings):
             else:
                 self.working_dir = get_temp_cache_dir(self.input_path)
 
+        if not self.dry_run and self.output_dir:
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+
         return self
 
     def __repr__(self):

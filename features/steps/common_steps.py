@@ -100,6 +100,12 @@ def step_given_create_dir(context, dir_name):
     dir_path.mkdir(parents=True, exist_ok=True)
 
 
+@then('目錄 "{dir_name}" 應該存在')
+def step_then_dir_should_exist(context, dir_name):
+    dir_path = context.working_dir / dir_name
+    (dir_path.exists() and dir_path.is_dir()) | should.be.true
+
+
 @then('輸出應該包含 "{expected_text}"')
 def step_then_output_should_contain(context, expected_text):
     combined_output = context.stdout + context.stderr
