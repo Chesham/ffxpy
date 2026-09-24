@@ -211,7 +211,7 @@ function formatBytes(n: number) {
 // picker: browsers never expose a real filesystem path from <input type="file">,
 // and this app needs one to hand off to ffmpeg, so it renders its own folder
 // navigator instead of shelling out to a GUI toolkit on the backend.
-function FileBrowserModal({ onConfirm, onClose }: { onConfirm: (paths: string[]) => void, onClose: () => void }) {
+function FileBrowserModal({ initialPath, onConfirm, onClose }: { initialPath?: string | null, onConfirm: (paths: string[]) => void, onClose: () => void }) {
   const [currentPath, setCurrentPath] = useState<string | null>(null)
   const [parent, setParent] = useState<string | null>(null)
   const [entries, setEntries] = useState<BrowseEntry[]>([])
@@ -243,6 +243,9 @@ function FileBrowserModal({ onConfirm, onClose }: { onConfirm: (paths: string[])
       setParent(d.parent)
       setEntries(d.entries)
       setWarning(d.warning || null)
+      if (d.path) {
+        localStorage.setItem('ffxpy_last_browse_dir', d.path)
+      }
       if (!opts?.keepInputIfStale || manualPathRef.current === path) {
         setManualPath(d.path)
       }
@@ -251,7 +254,10 @@ function FileBrowserModal({ onConfirm, onClose }: { onConfirm: (paths: string[])
     } finally { setLoading(false) }
   }, [])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    const startPath = initialPath || localStorage.getItem('ffxpy_last_browse_dir') || null
+    load(startPath)
+  }, [load, initialPath])
 
   // The text after the last "/" is treated as a live filter against the
   // already-loaded directory (no network round-trip) instead of part of the
@@ -1628,6 +1634,7 @@ export default function App() {
       )}
       {isBrowserOpen && (
         <FileBrowserModal
+          initialPath={activeSourcePath || (sourceOrder.length ? sourceOrder[0] : null)}
           onClose={() => setIsBrowserOpen(false)}
           onConfirm={async (paths) => {
             setIsBrowserOpen(false)

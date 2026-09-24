@@ -38,13 +38,11 @@ TEMP_DIR.mkdir(parents=True, exist_ok=True)
 keyframes_cache: Dict[str, List[float]] = {}
 active_jobs: Dict[str, asyncio.Queue] = {}
 running_tasks: Dict[str, asyncio.Task] = {}
-shutdown_signal: asyncio.Event = None
+shutdown_signal: asyncio.Event = asyncio.Event()
 
 
 @app.on_event('startup')
 async def startup_event():
-    global shutdown_signal
-    shutdown_signal = asyncio.Event()
 
     if sys.platform == 'win32':
         # Silence the annoying ConnectionResetError when scrubbing video on Windows
@@ -199,12 +197,18 @@ async def browse_directory(path: str | None = None):
     try:
         target = target.resolve()
     except (OSError, RuntimeError):
-        raise HTTPException(status_code=400, detail='Invalid path') from None
+        target = Path.home().resolve()
 
-    if not target.exists():
-        raise HTTPException(status_code=404, detail='Directory not found')
-    if not target.is_dir():
-        raise HTTPException(status_code=400, detail='Not a directory')
+    # If target is a file or does not exist, walk up until an existing
+    # directory is found
+    curr = target
+    while not curr.exists() or not curr.is_dir():
+        if curr.parent == curr:
+            curr = Path.home().resolve()
+            break
+        curr = curr.parent
+
+    target = curr
 
     dirs: list[Path] = []
     files: list[Path] = []

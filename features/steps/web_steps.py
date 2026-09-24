@@ -60,3 +60,18 @@ def step_check_header_max(context, header, max_val):
     headers = context.stream_response.headers
     val = int(headers.get(header.lower(), 0))
     val | should.be.lower.than(int(max_val) + 1)
+
+
+@when('我對 API "/api/browse" 發送目錄瀏覽請求，路徑為 "{path}"')
+def step_browse_directory(context, path):
+    from ffxpy.web.main import browse_directory
+
+    target_path = path.replace('{video_5s}', str(context.video_5s))
+    context.browse_response = asyncio.run(browse_directory(target_path))
+
+
+@then('回傳的瀏覽路徑應該等於 "{file_name}" 的所在目錄')
+def step_check_browse_parent_path(context, file_name):
+    file_path = context.video_5s if file_name == '{video_5s}' else Path(file_name)
+    expected_dir = file_path.parent.resolve().as_posix()
+    context.browse_response['path'] | should.be.equal.to(expected_dir)
