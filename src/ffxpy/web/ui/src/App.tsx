@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   Loader2, CheckCircle2, Plus, ChevronLeft, ChevronRight,
   Settings2, Clock, Code, LocateFixed,
-  History as HistoryIcon, Layers, CircleDot, X, AlertCircle, PlayCircle, Film, Boxes, GripVertical, HelpCircle, Folder, FolderOpen
+  History as HistoryIcon, Layers, CircleDot, X, AlertCircle, PlayCircle, Film, Boxes, GripVertical, HelpCircle, Folder, FolderOpen, Trash2, RotateCcw
 } from 'lucide-react'
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
@@ -443,6 +443,7 @@ interface GlobalSetting {
   skip_existing: boolean;
   deinterlace: boolean;
   output_dir: string;
+  temp_dir: string;
   crop?: string;
   fps?: string;
 }
@@ -457,7 +458,7 @@ export default function App() {
   const [activeJobId, setActiveJobId] = useState<string | null>(null)
   const [globalSetting, setGlobalSetting] = useState<GlobalSetting>(() => {
     const saved = localStorage.getItem('ffxpy_global_settings')
-    return saved ? JSON.parse(saved) : { video_codec: 'copy', audio_codec: 'copy', video_bitrate: '', audio_bitrate: '', overwrite: true, keep_temp: false, skip_existing: false, deinterlace: false, output_dir: '', crop: '' }
+    return saved ? { temp_dir: '', ...JSON.parse(saved) } : { video_codec: 'copy', audio_codec: 'copy', video_bitrate: '', audio_bitrate: '', overwrite: true, keep_temp: false, skip_existing: false, deinterlace: false, output_dir: '', temp_dir: '', crop: '' }
   })
   const [yamlText, setYamlText] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -475,6 +476,7 @@ export default function App() {
   const [isHelpOpen, setIsHelpOpen] = useState(false)
   const [isBrowserOpen, setIsBrowserOpen] = useState(false)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
+  const [clearedJobs, setClearedJobs] = useState<Job[] | null>(null)
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const settingsInputRef = useRef<HTMLInputElement>(null)
@@ -626,8 +628,17 @@ export default function App() {
   }, [addSource])
 
   const removeSource = (path: string) => {
-    const inUse = jobs.some(j => j.setting.input_path === path || j.setting.merge_paths?.includes(path))
-    if (inUse) return
+    // Closing media must remain possible even after it has been assigned to a
+    // job. Keep the flow itself, but detach this path from ordinary jobs and
+    // remove just this entry from a merge job's explicit source list.
+    setJobs(prev => prev.map(job => ({
+      ...job,
+      setting: {
+        ...job.setting,
+        input_path: job.setting.input_path === path ? undefined : job.setting.input_path,
+        merge_paths: job.setting.merge_paths?.filter(p => p !== path),
+      },
+    })))
     setSources(prev => { const next = { ...prev }; delete next[path]; return next })
     const remaining = sourceOrder.filter(p => p !== path)
     setSourceOrder(remaining)
@@ -643,6 +654,21 @@ export default function App() {
       audio_bitrate: recomputed.audio_bitrate,
       fps: recomputed.fps,
     }))
+    setToastMessage(`Closed ${basename(path)} and detached it from the flow`)
+  }
+
+  const toggleClearFlow = () => {
+    if (jobs.length > 0) {
+      setClearedJobs(jobs)
+      setJobs([])
+      setActiveJobId(null)
+      setToastMessage('Flow cleared — click Undo Clear to restore it')
+    } else if (clearedJobs) {
+      setJobs(clearedJobs)
+      setActiveJobId(clearedJobs[0]?.id ?? null)
+      setClearedJobs(null)
+      setToastMessage('Flow restored')
+    }
   }
 
   const openSettings = useCallback(() => {
@@ -754,6 +780,7 @@ export default function App() {
     setSourceOrder([])
     setActiveSourcePath('')
     setJobs([])
+    setClearedJobs(null)
     setActiveJobId(null)
     setCurrentTime(0)
     setError(null)
@@ -785,6 +812,7 @@ export default function App() {
         deinterlace: globalSetting.deinterlace,
         crop: globalSetting.crop,
         fps: globalSetting.fps,
+        temp_dir: globalSetting.temp_dir,
       }),
       // Every job carries its own input_path (Media Pool source) instead of
       // relying on a single flow-level input_path, so jobs can target different files.
@@ -1007,6 +1035,9 @@ export default function App() {
            <div className="h-6 w-[1px] bg-white/10" />
            <div className="flex items-center gap-4">
              <button onClick={openSettings} className="flex items-center gap-2 text-gray-500 hover:text-cyan-500 transition-colors uppercase font-black text-[9px] tracking-widest"><Settings2 size={14}/> Flow Settings</button>
+             <button onClick={toggleClearFlow} disabled={!jobs.length && !clearedJobs} className="flex items-center gap-2 text-gray-500 hover:text-amber-400 disabled:opacity-20 transition-colors uppercase font-black text-[9px] tracking-widest border-l border-white/5 pl-4">
+               {jobs.length ? <Trash2 size={14}/> : <RotateCcw size={14}/>} {jobs.length ? 'Clear Flow' : 'Undo Clear'}
+             </button>
              <button onClick={handleCloseVideo} disabled={!sourceOrder.length} className="flex items-center gap-2 text-gray-500 hover:text-red-500 disabled:opacity-20 transition-colors uppercase font-black text-[9px] tracking-widest border-l border-white/5 pl-4"><X size={14}/> Close All Sources</button>
              <div className="flex items-center gap-3 px-4 py-1.5 bg-white/[0.02] border border-white/[0.05] rounded-full">
                <div className="flex items-center gap-2 border-r border-white/5 pr-3">
@@ -1433,12 +1464,11 @@ export default function App() {
                   <div className="space-y-1.5 max-h-40 overflow-y-auto custom-scrollbar pr-1">
                     {sourceList.length === 0 && <p className="text-[10px] text-gray-700 italic py-2">No sources loaded yet.</p>}
                     {sourceList.map(s => {
-                      const inUse = jobs.some(j => j.setting.input_path === s.path || j.setting.merge_paths?.includes(s.path))
                       const isActive = s.path === activeSourcePath
                       return (
                         <div key={s.path} className={cn("flex items-center gap-2 px-3 py-2 rounded-xl border text-xs transition-colors", isActive ? "bg-cyan-500/10 border-cyan-500/30" : "bg-black border-white/[0.05]")}>
                           <button onClick={() => setActiveSourcePath(s.path)} title={s.path} className={cn("flex-1 text-left truncate font-mono", isActive ? "text-cyan-400" : "text-gray-400 hover:text-white")}>{basename(s.path)}</button>
-                          <button onClick={() => removeSource(s.path)} disabled={inUse} title={inUse ? "In use by a job" : "Remove from pool"} className="p-1 text-gray-600 hover:text-red-500 disabled:opacity-20 disabled:hover:text-gray-600 transition-colors shrink-0"><X size={12}/></button>
+                          <button onClick={() => removeSource(s.path)} title="Close source and detach it from jobs" className="p-1 text-gray-600 hover:text-red-500 transition-colors shrink-0"><X size={12}/></button>
                         </div>
                       )
                     })}
@@ -1456,6 +1486,17 @@ export default function App() {
                     <button onClick={() => setIsBrowserOpen(true)} className="px-4 rounded-2xl bg-white/[0.05] hover:bg-white/[0.1] text-white text-[10px] font-black uppercase tracking-widest transition-colors">Browse</button>
                   </div>
                   <p className="text-[9px] text-gray-700 italic">Each job binds to one source, so different jobs can edit different files in the same flow.</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">TEMP Directory (Local SSD)</label>
+                  <input
+                    className="w-full bg-black border border-white/[0.05] rounded-2xl px-5 py-4 text-xs text-amber-400 outline-none focus:border-amber-500/30 font-mono transition-colors"
+                    placeholder="e.g. C:/ffxpy-temp or /mnt/ssd/ffxpy-temp"
+                    value={globalSetting.temp_dir || ''}
+                    onChange={e => setGlobalSetting({...globalSetting, temp_dir: normalizePath(e.target.value)})}
+                  />
+                  <p className="text-[9px] text-gray-700 italic">Split/Crop intermediate files and the merge list are written here. Leave empty to use the source directory.</p>
                 </div>
 
                 <div className="space-y-2">

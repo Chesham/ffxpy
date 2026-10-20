@@ -118,7 +118,9 @@ def crop_normalize(setting: Setting):
             stem += f'_{_format_duration_for_filename(setting.end)}'
         output_path = input_path.with_stem(stem)
 
-    if setting.output_dir:
+    if setting.temp_dir:
+        output_path = setting.temp_dir / output_path.name
+    elif setting.output_dir:
         output_path = setting.output_dir / output_path.name
     elif setting.working_dir:
         output_path = setting.working_dir / output_path.name
@@ -148,7 +150,9 @@ def split_normalize(setting: Setting):
         else:
             output_path = Path(input_path.name)
 
-    if setting.output_dir:
+    if setting.temp_dir:
+        output_path = setting.temp_dir / output_path.name
+    elif setting.output_dir:
         output_path = setting.output_dir / output_path.name
     elif setting.working_dir:
         output_path = setting.working_dir / output_path.name
@@ -159,7 +163,7 @@ def split_normalize(setting: Setting):
 
 
 def merge_normalize(setting: Setting, merge_paths: list[Path] | None = None):
-    working_dir = setting.working_dir or Path('.')
+    working_dir = setting.temp_dir or setting.working_dir or Path('.')
     if not setting.merge_paths:
         if merge_paths:
             setting.merge_paths = merge_paths
@@ -168,7 +172,7 @@ def merge_normalize(setting: Setting, merge_paths: list[Path] | None = None):
                 working_dir.glob('*_split_*', case_sensitive=False)
             )
 
-    if not setting.working_dir and setting.merge_paths:
+    if not setting.working_dir and not setting.temp_dir and setting.merge_paths:
         candidate_dir = setting.merge_paths[0].resolve().parent
         if is_directory_writable(candidate_dir):
             working_dir = candidate_dir

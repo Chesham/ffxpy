@@ -53,6 +53,7 @@ class Setting(pydantic_settings.BaseSettings):
     app_name: str = 'ffxpy'
     log_level: str = 'INFO'
     working_dir: Path | None = None
+    temp_dir: Path | None = None
     output_dir: Path | None = None
     output_path: Path | None = None
     input_path: Path | None = None
@@ -83,7 +84,12 @@ class Setting(pydantic_settings.BaseSettings):
     deinterlace: bool = False
 
     @pydantic.field_validator(
-        'working_dir', 'output_dir', 'output_path', 'input_path', mode='before'
+        'working_dir',
+        'temp_dir',
+        'output_dir',
+        'output_path',
+        'input_path',
+        mode='before',
     )
     @classmethod
     def path_validator(cls, v: str | Path | None) -> str | Path | None:
@@ -141,8 +147,13 @@ class Setting(pydantic_settings.BaseSettings):
             else:
                 self.working_dir = get_temp_cache_dir(self.input_path)
 
-        if not self.dry_run and self.output_dir:
-            self.output_dir.mkdir(parents=True, exist_ok=True)
+        if not self.dry_run:
+            if self.temp_dir:
+                self.temp_dir.mkdir(parents=True, exist_ok=True)
+            if self.working_dir:
+                self.working_dir.mkdir(parents=True, exist_ok=True)
+            if self.output_dir:
+                self.output_dir.mkdir(parents=True, exist_ok=True)
 
         return self
 
