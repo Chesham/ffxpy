@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## 🚀 [0.6.1] - 2026-10-21
+
+### 🎨 Web UI & Workflow Improvements
+- 🗂️ **Independent Source Closing**: Allow individual media sources to be closed even when referenced by jobs, safely detaching only that source from the flow.
+- ↩️ **Reversible Flow Clearing**: Added a one-click Clear Flow action that becomes Undo Clear so the job queue can be restored immediately.
+- ⚡ **Local SSD Temporary Directory**: Added a `temp_dir` Flow Setting, available through `Alt+S`, for placing Split/Crop intermediates and merge lists on faster local storage while keeping final Merge output in its configured destination.
+
+### 🔧 Core Enhancements
+- 📁 **Automatic Temp Directory Creation**: Automatically creates configured temporary directories before processing.
+
+---
+
 ## 🚀 [0.6.0] - 2026-09-25
 
 ### ✨ Core Features & Enhancements
