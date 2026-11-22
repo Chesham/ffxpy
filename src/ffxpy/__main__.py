@@ -19,7 +19,7 @@ from ffxpy import __version__
 from ffxpy.const import Command
 from ffxpy.context import Context, solve_context
 from ffxpy.models.flow import Flow, merge_normalize, split_normalize
-from ffxpy.probe import detect_interlacing_heavily, is_interlaced, probe_video
+from ffxpy.probe import detect_interlacing_heavily, input_format_args, is_interlaced, probe_video
 from ffxpy.runner import run_ffmpeg
 from ffxpy.setting import Setting
 from ffxpy.vendor import async_typer
@@ -258,6 +258,7 @@ async def split(
         dry_run=setting.dry_run,
         total_duration=job_duration,
         job_name=f'Splitting {input_path.name}',
+        expected_output_path=output_path,
     )
     if not success and not setting.dry_run:
         raise typer.Exit(code=1)
@@ -410,7 +411,10 @@ async def merge(
 
     # For merge, we don't easily know the total duration without probing all parts
     # For now, let's just run it without a specific duration
-    success = await run_ffmpeg(args, dry_run=setting.dry_run, job_name='Merging files')
+    success = await run_ffmpeg(
+        args, dry_run=setting.dry_run, job_name='Merging files',
+        expected_output_path=setting.output_path,
+    )
     if not success and not setting.dry_run:
         raise typer.Exit(code=1)
 
@@ -482,6 +486,7 @@ async def crop(
         dry_run=setting.dry_run,
         total_duration=info.duration,
         job_name=f'Cropping {input_path.name}',
+        expected_output_path=output_path,
     )
     if not success and not setting.dry_run:
         raise typer.Exit(code=1)
@@ -746,7 +751,7 @@ async def flow(
 
     update_overall_metrics()
 
-    async def run_job(job_args, job_duration, job_name):
+    async def run_job(job_args, job_duration, job_name, output_path):
         nonlocal completed_jobs
         async with semaphore:
             result = await run_ffmpeg(
@@ -756,6 +761,7 @@ async def flow(
                 job_name=job_name,
                 progress=progress,
                 master_task_id=master_task_id,
+                expected_output_path=output_path,
             )
             completed_jobs += 1
             update_overall_metrics()
@@ -768,6 +774,7 @@ async def flow(
         if pending_tasks:
             await asyncio.gather(*pending_tasks, return_exceptions=True)
 
+    flow_succeeded = False
     try:
         with progress:
             for index, job in enumerate(flow_data.jobs):
@@ -901,19 +908,21 @@ async def flow(
                         job_name=job_name,
                         progress=progress,
                         master_task_id=master_task_id,
+                        expected_output_path=job.setting.output_path,
                     )
                     if not success and not setting.dry_run:
                         raise RuntimeError(f'Job "{job_name}" failed')
                     completed_jobs += 1
                     update_overall_metrics()
                 else:
-                    task = asyncio.create_task(run_job(args, job_duration, job_name))
+                    task = asyncio.create_task(run_job(args, job_duration, job_name, job.setting.output_path))
                     pending_tasks.append(task)
 
             if pending_tasks:
                 results = await asyncio.gather(*pending_tasks)
                 if any(r is False for r in results) and not setting.dry_run:
                     raise RuntimeError('One or more parallel jobs failed')
+        flow_succeeded = True
     except (Exception, asyncio.CancelledError) as e:
         await cancel_pending_tasks()
         if not isinstance(e, asyncio.CancelledError):
@@ -939,7 +948,7 @@ async def flow(
                     else:
                         await asyncio.sleep(0.3)
 
-        for job in flow_data.jobs:
+        for job in flow_data.jobs if flow_succeeded else []:
             if job.command != Command.MERGE:
                 continue
             # The merge job's own keep_temp decides whether its own
@@ -1017,6 +1026,7 @@ def compile_commandline(
         if alt_path.exists():
             input_path_final = alt_path
 
+    args += input_format_args(input_path_final)
     args += ['-i', str(input_path_final)]
 
     # 2. Post-input seeking (Accurate Seek)

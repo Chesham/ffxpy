@@ -10,12 +10,13 @@ from typing import Any, Dict, List
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from rich.console import Console
 
+from ffxpy.web.hls_preview import configure_cache, router as hls_router
 from ffxpy.const import Command
 from ffxpy.models.flow import Flow, FlowJob
-from ffxpy.probe import detect_interlacing_heavily, is_interlaced, probe_video
+from ffxpy.probe import detect_interlacing_heavily, input_format_args, is_interlaced, probe_video
 from ffxpy.runner import run_ffmpeg
 from ffxpy.setting import Setting
 
@@ -33,6 +34,8 @@ app.add_middleware(
 settings = Setting()
 TEMP_DIR = Path(tempfile.gettempdir()) / 'ffxpy_web'
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
+configure_cache(TEMP_DIR)
+app.include_router(hls_router)
 
 # Global stores
 keyframes_cache: Dict[str, List[float]] = {}
@@ -151,6 +154,55 @@ async def stream_video(path: str, request: Request):
         status_code=206,
         headers=headers,
     )
+
+
+# Cache browser-compatible MP4 remuxes. Original media is never modified.
+preview_locks: Dict[str, asyncio.Lock] = {}
+
+
+@app.get('/api/preview')
+async def preview_video(path: str):
+    import hashlib
+
+    video_path = Path(path)
+    if not video_path.is_file():
+        raise HTTPException(status_code=404, detail='File not found')
+    info = await probe_video(video_path, ffprobe_path=settings.ffprobe_path)
+    if 'mpegts' not in info.format_name:
+        raise HTTPException(status_code=415, detail='Preview remux only supports MPEG-TS')
+
+    stat = video_path.stat()
+    token = hashlib.sha256(
+        f'{video_path.resolve()}:{stat.st_size}:{stat.st_mtime_ns}'.encode()
+    ).hexdigest()[:24]
+    cached = TEMP_DIR / f'preview_{token}.mp4'
+    if not cached.is_file() or not cached.stat().st_size:
+        lock = preview_locks.setdefault(token, asyncio.Lock())
+        async with lock:
+            if not cached.is_file() or not cached.stat().st_size:
+                partial = TEMP_DIR / f'preview_{token}.partial.mp4'
+                cmd = [
+                    settings.ffmpeg_path, '-hide_banner', '-loglevel', 'error',
+                    '-y', *input_format_args(video_path), '-i', str(video_path),
+                    '-map', '0:v:0', '-map', '0:a:0?',
+                    '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k',
+                    '-movflags', '+faststart', str(partial),
+                ]
+                process = await asyncio.create_subprocess_exec(
+                    *cmd, stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                try:
+                    _, error = await process.communicate()
+                    if process.returncode or not partial.exists() or not partial.stat().st_size:
+                        raise HTTPException(
+                            status_code=422,
+                            detail=f'Preview conversion failed: {error.decode(errors="replace")[-1600:]}',
+                        )
+                    partial.replace(cached)
+                finally:
+                    partial.unlink(missing_ok=True)
+    return FileResponse(cached, media_type='video/mp4')
 
 
 @app.post('/api/close')
@@ -309,6 +361,7 @@ async def get_keyframes(path: str, time: float = -1.0, range_sec: float = 2.0):
             'frame=pts_time',
             '-of',
             'json',
+            *input_format_args(video_path),
             str(video_path),
         ]
     else:
@@ -327,6 +380,7 @@ async def get_keyframes(path: str, time: float = -1.0, range_sec: float = 2.0):
             f'{start}%{end}',
             '-of',
             'json',
+            *input_format_args(video_path),
             str(video_path),
         ]
 
@@ -364,6 +418,8 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
     from ffxpy.__main__ import compile_commandline
     from ffxpy.models.flow import merge_normalize, split_normalize
 
+    completed_successfully = False
+    res_cleanup = set()
     try:
         flow = Flow.model_validate(request_data)
         console.print(
@@ -587,6 +643,7 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
                 total_duration=timedelta(seconds=weight),
                 job_name=job_name,
                 on_progress=progress_callback,
+                expected_output_path=output_path,
             )
             if not success:
                 async with progress_lock:
@@ -632,6 +689,7 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
         for i, j in merges:
             await run_single_job(i, j)
 
+        completed_successfully = True
         await queue.put(
             {
                 'status': 'finished',
@@ -649,7 +707,7 @@ async def run_flow_background(job_id: str, request_data: Dict[str, Any]):
         # Each entry in res_cleanup was only added if its producing job's own
         # keep_temp said to delete it (see Phase 0 above), so no further
         # flow-level gate is needed here.
-        for f in res_cleanup:
+        for f in res_cleanup if completed_successfully else []:
             if not f.exists():
                 continue
             # Windows locks a file while a process still has it open --

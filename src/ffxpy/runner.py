@@ -2,6 +2,7 @@ import asyncio
 import collections
 import re
 from datetime import timedelta
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from rich.console import Console
@@ -25,6 +26,7 @@ async def run_ffmpeg(
     progress: Optional[Progress] = None,
     master_task_id: Optional[TaskID] = None,
     on_progress: Optional[Callable[[Dict[str, Any]], Union[None, Any]]] = None,
+    expected_output_path: Optional[Path] = None,
 ):
     cmd_str = ' '.join(str(arg) for arg in args)
     if dry_run:
@@ -229,6 +231,18 @@ async def run_ffmpeg(
             if asyncio.iscoroutine(res):
                 await res
         return False
+
+    if expected_output_path is not None:
+        if not expected_output_path.is_file() or expected_output_path.stat().st_size == 0:
+            message = f'ffmpeg produced no valid output file: {expected_output_path}'
+            console.print(f'[red]{message}[/red]')
+            if on_progress:
+                res = on_progress({
+                    'status': 'error', 'job_name': job_name, 'log': message,
+                })
+                if asyncio.iscoroutine(res):
+                    await res
+            return False
 
     if on_progress:
         res = on_progress({'status': 'completed', 'job_name': job_name})

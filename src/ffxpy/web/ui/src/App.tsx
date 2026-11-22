@@ -7,6 +7,7 @@ import {
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 import yaml from 'js-yaml'
+import Hls from 'hls.js'
 
 function cn(...inputs: ClassValue[]) { return twMerge(clsx(inputs)) }
 // Always relative: in prod the backend serves this same page, and in dev
@@ -487,6 +488,36 @@ export default function App() {
   sourceOrderRef.current = sourceOrder
 
   const videoInfo = sources[activeSourcePath]?.info ?? null
+  // HLS.js transmuxes requested TS segments to MSE; no whole-file MP4 cache.
+  useEffect(() => {
+    const video = videoRef.current
+    const info = sources[activeSourcePath]?.info
+    if (!video || !info?.format_name?.includes('mpegts')) return
+    const url = `${API_BASE}/api/hls/playlist.m3u8?path=${encodeURIComponent(activeSourcePath)}`
+    let hls: Hls | undefined
+    if (Hls.isSupported()) {
+      hls = new Hls({ enableWorker: true, maxBufferLength: 24, backBufferLength: 16 })
+      hls.loadSource(url)
+      hls.attachMedia(video)
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) {
+          setError(`HLS 預覽失敗：${data.details}`)
+        }
+      })
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = url
+    } else {
+      setError('此瀏覽器不支援 HLS/MSE 預覽')
+    }
+    return () => {
+      hls?.destroy()
+      if (video.src === url) {
+        video.removeAttribute('src')
+        video.load()
+      }
+    }
+  }, [activeSourcePath, sources[activeSourcePath]?.info?.format_name])
+
   const establishedMap = sources[activeSourcePath]?.establishedMap ?? {}
   const fpsToFloat = (fps: string): number => {
     const [num, den] = fps.split('/')
@@ -1088,7 +1119,7 @@ export default function App() {
               ))}
            </div>
            <div className="flex-1 bg-black rounded-3xl overflow-hidden border border-white/[0.03] shadow-2xl relative group">
-              {videoInfo ? <video ref={videoRef} src={`${API_BASE}/api/stream?path=${encodeURIComponent(activeSourcePath)}`} className="w-full h-full object-contain"
+              {videoInfo ? <video ref={videoRef} src={videoInfo.format_name?.includes("mpegts") ? undefined : `${API_BASE}/api/stream?path=${encodeURIComponent(activeSourcePath)}`} className="w-full h-full object-contain"
                 onTimeUpdate={()=>{
                   if(videoRef.current && !videoRef.current.seeking) {
                     const t = videoRef.current.currentTime

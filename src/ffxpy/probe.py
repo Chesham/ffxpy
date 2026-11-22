@@ -88,6 +88,33 @@ async def detect_interlacing_heavily(path: Path, ffmpeg_path: str = 'ffmpeg') ->
     return False
 
 
+def is_png_prefixed_mpegts(path: Path) -> bool:
+    """Identify MPEG-TS packets hidden behind a tiny PNG prefix.
+
+    Some capture tools prepend a 1x1 PNG to a transport stream. FFprobe
+    auto-detects png_pipe instead of the actual transport stream.
+    Require several aligned 188-byte sync bytes to avoid treating normal
+    PNG files as MPEG-TS.
+    """
+    if path.suffix.lower() not in {'.ts', '.m2ts', '.mts'}:
+        return False
+    try:
+        with path.open('rb') as source:
+            head = source.read(8192)
+        if not head.startswith(b'\x89PNG\r\n\x1a\n'):
+            return False
+        for offset in range(8, min(2048, len(head) - 376)):
+            if all(head[offset + step * 188] == 0x47 for step in range(3)):
+                return True
+    except OSError:
+        return False
+    return False
+
+
+def input_format_args(path: Path) -> list[str]:
+    return ['-f', 'mpegts'] if is_png_prefixed_mpegts(path) else []
+
+
 async def probe_video(path: Path, ffprobe_path: str = 'ffprobe') -> VideoInfo:
     cmd = [
         ffprobe_path,
@@ -98,6 +125,7 @@ async def probe_video(path: Path, ffprobe_path: str = 'ffprobe') -> VideoInfo:
         '-show_format',
         '-show_streams',
         '-find_stream_info',
+        *input_format_args(path),
         str(path),
     ]
     process = await asyncio.create_subprocess_exec(

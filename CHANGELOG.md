@@ -1,5 +1,25 @@
 # CHANGELOG
 
+## 🚀 [0.6.2] - 2026-11-23
+
+### 🎬 MPEG-TS Browser Preview
+- Added on-demand HLS preview for H.264/AAC MPEG-TS inputs, retaining compressed video/audio streams without full-file MP4 remux.
+- Aligned HLS segments to actual source keyframes; use the native FFmpeg HLS muxer across five-segment windows to reduce boundary stutter.
+- Added bounded segment caching and HLS.js playback in the Web UI.
+- Correctly detect PNG-prefixed MPEG-TS inputs and force the MPEG-TS demuxer for probing and processing.
+
+### 🛡️ Workflow Reliability
+- Reject empty FFmpeg outputs instead of treating them as successfully processed clips.
+- Preserve temporary clips when workflows fail for troubleshooting.
+- **Preserved existing Keyframe search behavior and the 50ms copy-mode seek compensation**, pending hands-on cutting validation.
+
+### ⚠️ Known Limitations
+- A slight preview hitch can remain where HLS windows meet.
+- TS source start timestamps may differ from browser timeline positions during keyframe navigation; this release intentionally does not change split/keyframe timing behavior.
+
+---
+
+
 ## 🚀 [0.6.1] - 2026-10-21
 
 ### 🎨 Web UI & Workflow Improvements
