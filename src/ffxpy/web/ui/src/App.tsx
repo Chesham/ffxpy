@@ -2,11 +2,12 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   Loader2, CheckCircle2, Plus, ChevronLeft, ChevronRight,
   Settings2, Clock, Code, LocateFixed,
-  History as HistoryIcon, Layers, CircleDot, X, AlertCircle, PlayCircle, Film, Boxes, GripVertical, HelpCircle, Folder, FolderOpen, Trash2, RotateCcw
+  History as HistoryIcon, Layers, CircleDot, X, AlertCircle, PlayCircle, Film, Boxes, GripVertical, HelpCircle, Folder, FolderOpen, Trash2, RotateCcw, BookOpen
 } from 'lucide-react'
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 import yaml from 'js-yaml'
+import ReactMarkdown from 'react-markdown'
 import Hls from 'hls.js'
 
 function cn(...inputs: ClassValue[]) { return twMerge(clsx(inputs)) }
@@ -475,6 +476,23 @@ export default function App() {
   const [isTyping, setIsTyping] = useState(false)
   const [isCropMode, setIsCropMode] = useState(false)
   const [isHelpOpen, setIsHelpOpen] = useState(false)
+  const [isAboutOpen, setIsAboutOpen] = useState(false)
+  const [about, setAbout] = useState<{version: string; changelog: string} | null>(null)
+  const [aboutError, setAboutError] = useState<string | null>(null)
+  useEffect(() => {
+    const controller = new AbortController()
+    fetch(`${API_BASE}/api/about`, { signal: controller.signal })
+      .then(async response => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        return response.json()
+      })
+      .then(data => { setAbout(data); setAboutError(null) })
+      .catch(error => {
+        if (!controller.signal.aborted) setAboutError(String(error))
+      })
+    return () => controller.abort()
+  }, [])
+
   const [isBrowserOpen, setIsBrowserOpen] = useState(false)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
   const [clearedJobs, setClearedJobs] = useState<Job[] | null>(null)
@@ -732,6 +750,10 @@ export default function App() {
           setIsBrowserOpen(false)
           return
         }
+        if (isAboutOpen) {
+          setIsAboutOpen(false)
+          return
+        }
         if (isHelpOpen) {
           setIsHelpOpen(false)
           return
@@ -745,7 +767,7 @@ export default function App() {
         e.preventDefault()
         setIsBrowserOpen(true)
       }
-      if (isTyping || isBrowserOpen) return
+      if (isTyping || isBrowserOpen || isAboutOpen) return
 
       if (e.code === 'KeyS' && e.altKey) {
         e.preventDefault()
@@ -1083,7 +1105,19 @@ export default function App() {
              </div>
            </div>
         </div>
-        <button onClick={handleExecute} disabled={isSubmitting||!jobs.length} className="bg-cyan-600 hover:bg-cyan-400 text-white font-black text-[10px] px-6 py-2 rounded-full shadow-lg transition-all flex items-center gap-2 tracking-widest uppercase">{isSubmitting ? <Loader2 className="animate-spin" size={14}/> : <PlayCircle size={14}/>} Run Flow</button>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setIsAboutOpen(true)}
+            className="flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-2 text-[10px] font-bold text-gray-400 hover:text-cyan-400 hover:border-cyan-500/40 transition-colors"
+            aria-label="查看 FFXPy 版本與更新紀錄"
+            title="版本資訊與更新紀錄"
+          >
+            <BookOpen size={13}/>
+            <span className="font-mono">{about ? `v${about.version}` : '版本資訊'}</span>
+          </button>
+          <button onClick={handleExecute} disabled={isSubmitting||!jobs.length} className="bg-cyan-600 hover:bg-cyan-400 text-white font-black text-[10px] px-6 py-2 rounded-full shadow-lg transition-all flex items-center gap-2 tracking-widest uppercase">{isSubmitting ? <Loader2 className="animate-spin" size={14}/> : <PlayCircle size={14}/>} Run Flow</button>
+        </div>
       </nav>
 
       <div className="flex-1 flex overflow-hidden w-full">
@@ -1656,6 +1690,50 @@ export default function App() {
         </div>
       )}
 
+      {isAboutOpen && (
+        <div
+          className="fixed inset-0 z-[130] flex items-center justify-center bg-black/80 backdrop-blur-md p-4"
+          onClick={() => setIsAboutOpen(false)}
+          role="presentation"
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ffxpy-about-title"
+            className="w-full max-w-3xl max-h-[85vh] flex flex-col bg-[#0c0c0c] border border-white/10 rounded-3xl shadow-[0_0_50px_rgba(0,0,0,0.8)] overflow-hidden"
+            onClick={event => event.stopPropagation()}
+          >
+            <header className="flex justify-between items-center border-b border-white/10 p-6 shrink-0">
+              <div>
+                <h3 id="ffxpy-about-title" className="text-lg font-black text-white flex items-center gap-3"><BookOpen size={20} className="text-cyan-500"/> 更新紀錄</h3>
+                <p className="text-xs text-gray-500 mt-1">FFXPy {about ? `v${about.version}` : '版本資訊'}</p>
+              </div>
+              <button aria-label="關閉更新紀錄" onClick={() => setIsAboutOpen(false)} className="p-3 rounded-full bg-white/[0.03] hover:bg-white/[0.08]"><X size={20}/></button>
+            </header>
+            <div className="p-7 overflow-y-auto custom-scrollbar text-gray-300 text-sm leading-relaxed">
+              {about ? (
+                <div className="space-y-3">
+                  <ReactMarkdown components={{
+                    h1: ({children}) => <h4 className="text-xl font-black text-white mb-4">{children}</h4>,
+                    h2: ({children}) => <h5 className="text-lg font-bold text-cyan-400 pt-5 pb-2 border-b border-white/10">{children}</h5>,
+                    h3: ({children}) => <h6 className="text-sm font-bold text-white mt-4 mb-2">{children}</h6>,
+                    p: ({children}) => <p className="my-2 text-gray-400">{children}</p>,
+                    ul: ({children}) => <ul className="list-disc pl-6 space-y-1.5 my-3">{children}</ul>,
+                    li: ({children}) => <li className="text-gray-400">{children}</li>,
+                    strong: ({children}) => <strong className="text-gray-200">{children}</strong>,
+                    hr: () => <hr className="border-white/10 my-6"/>,
+                    a: ({children, href}) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-cyan-400 underline">{children}</a>,
+                  }}>{about.changelog}</ReactMarkdown>
+                </div>
+              ) : aboutError ? (
+                <p className="text-red-400">無法讀取更新紀錄：{aboutError}</p>
+              ) : (
+                <p className="text-gray-400">讀取更新紀錄中…</p>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
       {isHelpOpen && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/80 backdrop-blur-md animate-in fade-in duration-300" onClick={() => setIsHelpOpen(false)}>
           <div

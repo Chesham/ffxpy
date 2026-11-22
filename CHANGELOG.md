@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 🚀 [0.6.3] - 2026-11-23
+
+### 🖥️ Version & Release Notes in Web UI
+- Display the installed FFXPy version in the main toolbar and open an in-app changelog viewer by clicking it.
+- Serve version and the complete changelog through a local Web API; package the single repository changelog into the Python wheel.
+- Keep all Keyframe navigation and the 50ms copy-mode split seek compensation unchanged.
+
+---
+
+
 ## 🚀 [0.6.2] - 2026-11-23
 
 ### 🎬 MPEG-TS Browser Preview

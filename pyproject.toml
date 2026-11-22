@@ -1,6 +1,6 @@
 [project]
 name = "ffxpy"
-version = "0.6.2"
+version = "0.6.3"
 description = "A highly optimized CLI tool to simplify complex ffmpeg operations via YAML-defined workflows."
 readme = "README.md"
 authors = [
@@ -58,6 +58,11 @@ packages = ["src/ffxpy"]
 exclude = [
     "src/ffxpy/web/ui/node_modules",
 ]
+
+# Keep the single repository CHANGELOG as the source of truth, also inside
+# installed wheels so Web UI can display historical release notes offline.
+[tool.hatch.build.targets.wheel.force-include]
+"CHANGELOG.md" = "ffxpy/CHANGELOG.md"
 
 [tool.hatch.build.targets.sdist]
 exclude = [

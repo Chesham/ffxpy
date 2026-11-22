@@ -8,6 +8,8 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any, Dict, List
 
+from importlib import resources
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
@@ -79,6 +81,26 @@ async def shutdown_event():
     for task_id, task in running_tasks.items():
         if not task.done():
             task.cancel()
+
+
+@app.get('/api/about')
+async def get_about():
+    """Installed version and bundled release notes, usable without internet."""
+    from ffxpy import __version__
+
+    try:
+        changelog = resources.files('ffxpy').joinpath('CHANGELOG.md').read_text(
+            encoding='utf-8'
+        )
+    except (OSError, FileNotFoundError):
+        # Editable source checkouts keep the canonical changelog at repo root.
+        # Installed wheels include it directly in the ffxpy package.
+        source_changelog = Path(__file__).resolve().parents[3] / 'CHANGELOG.md'
+        try:
+            changelog = source_changelog.read_text(encoding='utf-8')
+        except OSError:
+            changelog = 'Release notes are not bundled with this installation.'
+    return {'version': __version__, 'changelog': changelog}
 
 
 @app.get('/api/probe')
