@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 🚀 [0.6.4] - 2026-11-24
+
+### 🛠️ HLS Segment Recovery
+- Fix HLS preview HTTP 422 when FFmpeg produces a different number of TS segments than the VOD playlist predicts (reproduced with HNDS-056 at segment 113).
+- Verify real FFmpeg playlist durations before publishing segments; retry with alternate segment cadences and fall back to explicit keyframe-aligned cuts for irregular TS sources.
+- Invalidate existing TS preview caches without modifying the source media.
+- Preserve existing split Keyframe navigation and the 50ms copy-mode seek compensation.
+
+---
+
+
 ## 🚀 [0.6.3] - 2026-11-23
 
 ### 🖥️ Version & Release Notes in Web UI

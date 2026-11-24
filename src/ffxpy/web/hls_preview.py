@@ -35,7 +35,7 @@ def configure_cache(directory: Path) -> None:
 def source_key(path: Path) -> str:
     stat = path.stat()
     return hashlib.sha256(
-        f'{path.resolve()}:{stat.st_size}:{stat.st_mtime_ns}:hlsmux-v1'.encode()
+        f'{path.resolve()}:{stat.st_size}:{stat.st_mtime_ns}:hlsmux-v2'.encode()
     ).hexdigest()[:24]
 
 
@@ -63,6 +63,25 @@ def evict_cache(exclude: Path) -> None:
             used -= size
         except OSError:
             continue
+
+
+def hls_durations(playlist: Path) -> list[float]:
+    """Read FFmpeg's actual segment durations, not just the file count."""
+    try:
+        return [
+            float(line.split(':', 1)[1].rstrip(','))
+            for line in playlist.read_text(encoding='utf-8').splitlines()
+            if line.startswith('#EXTINF:')
+        ]
+    except (OSError, ValueError):
+        return []
+
+
+def durations_match(actual: list[float], expected: list[float]) -> bool:
+    """Reject segment profiles that would drift from the published VOD timeline."""
+    return len(actual) == len(expected) and all(
+        abs(a - b) <= 0.25 for a, b in zip(actual, expected)
+    )
 
 
 def make_boundaries(keyframes: list[float], duration: float) -> list[float]:
@@ -238,38 +257,109 @@ async def segment(path: str, index: int):
                 span = end - start
                 if last < len(boundaries) - 1:
                     span = max(0.1, span - 0.05)
-                cmd = [
-                    settings.ffmpeg_path, '-hide_banner', '-loglevel', 'error',
-                    '-y', '-ss', f'{start:.6f}', *input_format_args(source),
-                    '-i', str(source), '-t', f'{span:.6f}',
-                    '-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy',
-                    '-output_ts_offset', f'{start:.6f}',
-                    '-f', 'hls', '-hls_time', str(SEGMENT_SECONDS),
-                    '-hls_list_size', '0', '-hls_playlist_type', 'vod',
-                    '-hls_flags', 'independent_segments',
-                    '-hls_segment_filename', pattern, playlist_file,
+                expected_durations = [
+                    boundaries[i + 1] - boundaries[i] for i in range(first, last)
                 ]
-                process = await asyncio.create_subprocess_exec(
-                    *cmd, stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                try:
-                    _, error = await asyncio.wait_for(process.communicate(), timeout=90)
-                except asyncio.TimeoutError:
-                    process.kill()
-                    await process.wait()
-                    raise HTTPException(status_code=504, detail='HLS window remux timed out') from None
-                parts = sorted(Path(directory).glob('part_*.ts'))
-                if (
-                    process.returncode != 0
-                    or len(parts) != len(targets)
-                    or any(p.stat().st_size == 0 for p in parts)
+                # FFmpeg's HLS muxer can choose a different starting GOP
+                # after seeking a TS with irregular PTS. In particular this
+                # may produce *six* fragments when our VOD manifest advertises
+                # five. Select a time profile whose actual EXTINF values
+                # agree with the manifest; otherwise use exact split_times.
+                parts: list[Path] = []
+                error = b''
+                for target_seconds in (
+                    float(SEGMENT_SECONDS), 8.75, 8.5, 9.0, 8.25, 9.25, 7.75
+                ):
+                    for previous in Path(directory).glob('part_*.ts'):
+                        previous.unlink()
+                    cmd = [
+                        settings.ffmpeg_path, '-hide_banner', '-loglevel', 'error',
+                        '-y', '-ss', f'{start:.6f}', *input_format_args(source),
+                        '-i', str(source), '-t', f'{span:.6f}',
+                        '-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy',
+                        '-output_ts_offset', f'{start:.6f}',
+                        '-f', 'hls', '-hls_time', str(target_seconds),
+                        '-hls_list_size', '0', '-hls_playlist_type', 'vod',
+                        '-hls_flags', 'independent_segments',
+                        '-hls_segment_filename', pattern, playlist_file,
+                    ]
+                    process = await asyncio.create_subprocess_exec(
+                        *cmd, stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    try:
+                        _, error = await asyncio.wait_for(process.communicate(), timeout=90)
+                    except asyncio.TimeoutError:
+                        process.kill()
+                        await process.wait()
+                        raise HTTPException(
+                            status_code=504, detail='HLS window remux timed out'
+                        ) from None
+                    parts = sorted(Path(directory).glob('part_*.ts'))
+                    if (
+                        process.returncode == 0
+                        and durations_match(
+                            hls_durations(Path(playlist_file)), expected_durations
+                        )
+                        and len(parts) == len(targets)
+                        and all(p.stat().st_size > 0 for p in parts)
+                    ):
+                        break
+                else:
+                    # Recover playable output even when the source's PTS/GOP
+                    # layout cannot be represented by the native HLS cadence.
+                    # The generic segment muxer follows our explicit
+                    # keyframe-aligned split times; it may have minor boundary
+                    # artifacts but must not cause a permanent HTTP 422.
+                    for previous in Path(directory).glob('part_*.ts'):
+                        previous.unlink()
+                    split_times = [
+                        f'{boundaries[i] - start:.6f}'
+                        for i in range(first + 1, last)
+                    ]
+                    cmd = [
+                        settings.ffmpeg_path, '-hide_banner', '-loglevel', 'error',
+                        '-y', '-ss', f'{start:.6f}', *input_format_args(source),
+                        '-i', str(source), '-t', f'{span:.6f}',
+                        '-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy',
+                        '-output_ts_offset', f'{start:.6f}',
+                        '-f', 'segment', '-segment_format', 'mpegts',
+                        '-segment_time_delta', '0.04',
+                        '-reset_timestamps', '0',
+                    ]
+                    if split_times:
+                        cmd += ['-segment_times', ','.join(split_times)]
+                    cmd += [pattern]
+                    process = await asyncio.create_subprocess_exec(
+                        *cmd, stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    try:
+                        _, error = await asyncio.wait_for(process.communicate(), timeout=90)
+                    except asyncio.TimeoutError:
+                        process.kill()
+                        await process.wait()
+                        raise HTTPException(
+                            status_code=504, detail='HLS fallback remux timed out'
+                        ) from None
+                    parts = sorted(Path(directory).glob('part_*.ts'))
+                    if process.returncode != 0:
+                        raise HTTPException(
+                            status_code=422,
+                            detail=(
+                                'HLS window and fallback failed: '
+                                + error.decode(errors='replace')[-1000:]
+                            ),
+                        )
+                if len(parts) != len(targets) or any(
+                    p.stat().st_size == 0 for p in parts
                 ):
                     raise HTTPException(
                         status_code=422,
                         detail=(
-                            f'HLS window remux failed: {len(parts)}/{len(targets)} '
-                            f'segments; {error.decode(errors="replace")[-1000:]}'
+                            f'HLS remux produced {len(parts)}/{len(targets)} '
+                            'nonempty segments; '
+                            + error.decode(errors='replace')[-1000:]
                         ),
                     )
                 for part, destination in zip(parts, targets):

@@ -4,7 +4,7 @@ from tempfile import TemporaryDirectory
 
 from fastapi import HTTPException
 
-from ffxpy.web.hls_preview import SEGMENT_SECONDS, cache_path, configure_cache, playlist_text, make_boundaries
+from ffxpy.web.hls_preview import SEGMENT_SECONDS, cache_path, configure_cache, playlist_text, make_boundaries, hls_durations, durations_match
 
 
 class HlsPreviewTests(unittest.TestCase):
@@ -29,6 +29,25 @@ class HlsPreviewTests(unittest.TestCase):
     def test_keyframe_aligned_boundaries(self):
         bounds = make_boundaries([0, 1.96, 3.93, 7.97, 9.91, 11.88, 19.75], 21.0)
         self.assertEqual(bounds, [0, 9.91, 19.75, 21.0])
+
+    def test_ffmpeg_extra_segment_detected_before_publishing(self):
+        expected = [11.811811, 8.008011, 8.008, 8.008011, 8.008]
+        # Regression: HNDS-056 index 113 used to return HTTP 422 because
+        # native HLS produced six segments for five advertised entries.
+        unexpected = [7.807811, 8.008, 8.008011, 8.008011, 8.008011, 4.004]
+        corrected = [11.811811, 8.008011, 8.008, 8.008011, 8.008]
+        self.assertFalse(durations_match(unexpected, expected))
+        self.assertTrue(durations_match(corrected, expected))
+
+    def test_hls_durations_parses_actual_ffmpeg_playlist(self):
+        with TemporaryDirectory() as directory:
+            manifest = Path(directory) / 'window.m3u8'
+            manifest.write_text(
+                '#EXTM3U\n#EXTINF:8.01,\npart_000.ts\n'
+                '#EXTINF:9.84,\npart_001.ts\n#EXT-X-ENDLIST\n'
+            )
+            self.assertEqual(hls_durations(manifest), [8.01, 9.84])
+            self.assertFalse(durations_match([8.01, 9.84], [8.01, 8.0]))
 
     def test_cache_invalidation_by_size_and_mtime(self):
         with TemporaryDirectory() as directory:
