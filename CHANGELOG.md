@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 🚀 [0.6.5] - 2026-11-26
+
+- Add a video-only output option (Audio Codec: None) to global and per-job settings and CLI workflows.
+- Omit audio bitrate and filters when audio is disabled; preserve default audio copying and 50ms copy-mode seek compensation.
+
+---
+
 ## 🚀 [0.6.4] - 2026-11-24
 
 ### 🛠️ HLS Segment Recovery

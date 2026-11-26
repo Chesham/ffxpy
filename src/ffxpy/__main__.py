@@ -1098,13 +1098,17 @@ def compile_commandline(
         )
         audio_codec = 'aac'
 
-    if not is_copy and setting.start and audio_codec != 'copy':
+    if not is_copy and setting.start and audio_codec not in ('copy', 'none'):
         args += ['-af', 'asetpts=PTS-STARTPTS']
 
-    args += ['-c:v', setting.video_codec, '-c:a', audio_codec]
+    args += ['-c:v', setting.video_codec]
+    if audio_codec == 'none':
+        args += ['-an']
+    else:
+        args += ['-c:a', audio_codec]
     if setting.video_bitrate:
         args += ['-b:v', setting.video_bitrate]
-    if setting.audio_bitrate:
+    if setting.audio_bitrate and audio_codec != 'none':
         args += ['-b:a', setting.audio_bitrate]
     if setting.maxrate:
         args += ['-maxrate', setting.maxrate]

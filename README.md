@@ -127,7 +127,7 @@ ffx merge --with-split --video-codec libx264 --video-bitrate 5M --scale 1280:720
 | :--- | :--- | :--- |
 | `video_codec` | Video codec (e.g., `libx264`, `h264_nvenc`, `copy`) | `copy` |
 | `video_bitrate` | Video bitrate (e.g., `5M`, `2000k`) | - |
-| `audio_codec` | Audio codec (e.g., `aac`, `copy`) | `copy` |
+| `audio_codec` | Audio codec (`aac`, `copy`, or `none` for video-only output) | `copy` |
 | `audio_bitrate` | Audio bitrate (e.g., `192k`) | - |
 | `scale` | Resize video (e.g., `1920:1080`, `1280:-1`) | - |
 | `preset` | ffmpeg preset (e.g., `fast`, `slow`, `p1` to `p7`) | - |

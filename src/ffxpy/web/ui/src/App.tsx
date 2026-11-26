@@ -1376,7 +1376,7 @@ export default function App() {
                                       <div className="space-y-2"><label>Target Bitrate {bitrateHintFor(activeJob.setting.input_path) && <span className="text-gray-600 normal-case">(source: {bitrateHintFor(activeJob.setting.input_path)})</span>}</label><input className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2 text-xs text-white outline-none font-mono font-normal" placeholder={bitrateHintFor(activeJob.setting.input_path) || 'e.g. 12M'} value={activeJob.setting.video_bitrate||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,video_bitrate:e.target.value||undefined}}:x))} /></div>
                                     </div>
                                     <div className="grid grid-cols-2 gap-4">
-                                      <div className="space-y-2"><label>Audio Codec</label><select className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2 text-xs text-white outline-none font-bold appearance-none cursor-pointer" value={activeJob.setting.audio_codec||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,audio_codec:e.target.value||undefined}}:x))}><option value="">Inherit</option><option value="copy">COPY</option><option value="aac">AAC</option></select></div>
+                                      <div className="space-y-2"><label>Audio Codec</label><select className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2 text-xs text-white outline-none font-bold appearance-none cursor-pointer" value={activeJob.setting.audio_codec||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,audio_codec:e.target.value||undefined}}:x))}><option value="">Inherit</option><option value="copy">COPY</option><option value="aac">AAC</option><option value="none">None (No Audio)</option></select></div>
                                       <div className="space-y-2"><label>Audio Bitrate {audioBitrateHintFor(activeJob.setting.input_path) && <span className="text-gray-600 normal-case">(source: {audioBitrateHintFor(activeJob.setting.input_path)})</span>}</label><input className="w-full bg-black border border-white/[0.05] rounded-xl px-4 py-2 text-xs text-white outline-none font-mono font-normal" placeholder={audioBitrateHintFor(activeJob.setting.input_path) || 'e.g. 192k'} value={activeJob.setting.audio_bitrate||''} onChange={e=>setJobs(jobs.map(x=>x.id===activeJob.id?{...x,setting:{...x.setting,audio_bitrate:e.target.value||undefined}}:x))} /></div>
                                     </div>
                                     <div className="space-y-2">
@@ -1610,7 +1610,7 @@ export default function App() {
                       onChange={e => setGlobalSetting({...globalSetting, audio_codec: e.target.value})}
                     >
                       <option value="copy">COPY</option>
-                      <option value="aac">AAC</option>
+                      <option value="aac">AAC</option><option value="none">None (No Audio)</option>
                     </select>
                   </div>
                   <div className="space-y-2">

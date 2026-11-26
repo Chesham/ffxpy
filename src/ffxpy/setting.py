@@ -137,7 +137,7 @@ class Setting(pydantic_settings.BaseSettings):
         if self.video_codec != 'copy' and not self.video_bitrate:
             raise ValueError('video_bitrate must be set when video_codec is not "copy"')
 
-        if self.audio_codec != 'copy' and not self.audio_bitrate:
+        if self.audio_codec not in ('copy', 'none') and not self.audio_bitrate:
             raise ValueError('audio_bitrate must be set when audio_codec is not "copy"')
 
         if not self.working_dir and self.input_path:
